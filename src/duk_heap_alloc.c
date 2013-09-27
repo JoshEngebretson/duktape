@@ -29,11 +29,11 @@ static void free_hobject_inner(duk_heap *heap, duk_hobject *h) {
 
 	if (DUK_HOBJECT_IS_COMPILEDFUNCTION(h)) {
 		duk_hcompiledfunction *f = (duk_hcompiledfunction *) h;
-		f = f;
+		DUK_UNREF(f);
 		/* Currently nothing to free; 'data' is a heap object */
 	} else if (DUK_HOBJECT_IS_NATIVEFUNCTION(h)) {
 		duk_hnativefunction *f = (duk_hnativefunction *) h;
-		f = f;
+		DUK_UNREF(f);
 		/* Currently nothing to free */
 	} else if (DUK_HOBJECT_IS_THREAD(h)) {
 		duk_hthread *t = (duk_hthread *) h;
@@ -48,9 +48,9 @@ static void free_hbuffer_inner(duk_heap *heap, duk_hbuffer *h) {
 	DUK_ASSERT(heap != NULL);
 	DUK_ASSERT(h != NULL);
 
-	if (DUK_HBUFFER_HAS_GROWABLE(h)) {
-		duk_hbuffer_growable *g = (duk_hbuffer_growable *) h;
-		DUK_DDDPRINT("free growable buffer %p", g->curr_alloc);
+	if (DUK_HBUFFER_HAS_DYNAMIC(h)) {
+		duk_hbuffer_dynamic *g = (duk_hbuffer_dynamic *) h;
+		DUK_DDDPRINT("free dynamic buffer %p", g->curr_alloc);
 		DUK_FREE(heap, g->curr_alloc);
 	}
 }
@@ -457,13 +457,4 @@ duk_heap *duk_heap_alloc(duk_alloc_function alloc_func,
 	}
 	return NULL;
 }
-
-duk_heap *duk_heap_alloc_default(void) {
-	return duk_heap_alloc(duk_default_alloc_function,
-	                      duk_default_realloc_function,
-	                      duk_default_free_function,
-	                      NULL,
-	                      duk_default_fatal_handler);
-}
-
 

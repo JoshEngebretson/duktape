@@ -22,11 +22,11 @@ int duk_builtin_string_constructor(duk_context *ctx) {
 	duk_set_top(ctx, 1);
 
 	if (duk_is_constructor_call(ctx)) {
-		duk_push_new_object_helper(ctx,
-                           DUK_HOBJECT_FLAG_EXTENSIBLE |
-		           DUK_HOBJECT_FLAG_SPECIAL_STRINGOBJ |
-                           DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_STRING),
-                           DUK_BIDX_STRING_PROTOTYPE);
+		duk_push_object_helper(ctx,
+		                       DUK_HOBJECT_FLAG_EXTENSIBLE |
+		                       DUK_HOBJECT_FLAG_SPECIAL_STRINGOBJ |
+		                       DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_STRING),
+		                       DUK_BIDX_STRING_PROTOTYPE);
 
 		/* String object internal value is immutable */
 		duk_dup(ctx, 0);
@@ -39,7 +39,7 @@ int duk_builtin_string_constructor(duk_context *ctx) {
 
 int duk_builtin_string_constructor_from_char_code(duk_context *ctx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
-	duk_hbuffer_growable *h;
+	duk_hbuffer_dynamic *h;
 	size_t i, n;
 	unsigned int cp;
 
@@ -48,8 +48,8 @@ int duk_builtin_string_constructor_from_char_code(duk_context *ctx) {
 	 */
 
 	n = duk_get_top(ctx);
-	duk_push_new_growable_buffer(ctx, 0);  /* FIXME: initial size estimate from 'n' */
-	h = (duk_hbuffer_growable *) duk_get_hbuffer(ctx, -1);
+	duk_push_dynamic_buffer(ctx, 0);  /* FIXME: initial size estimate from 'n' */
+	h = (duk_hbuffer_dynamic *) duk_get_hbuffer(ctx, -1);
 
 	for (i = 0; i < n; i++) {
 		cp = duk_to_uint16(ctx, i);
@@ -118,7 +118,7 @@ int duk_builtin_string_prototype_char_at(duk_context *ctx) {
 
 	duk_push_this_coercible_to_string(ctx);
 	pos = duk_to_int(ctx, 0);
-	duk_substring(ctx, pos, pos + 1);
+	duk_substring(ctx, -1, pos, pos + 1);
 	return 1;
 }
 
@@ -205,7 +205,7 @@ int duk_builtin_string_prototype_substring(duk_context *ctx) {
 
 	DUK_ASSERT(end_pos >= start_pos);
 
-	duk_substring(ctx, (size_t) start_pos, (size_t) end_pos);
+	duk_substring(ctx, -1, (size_t) start_pos, (size_t) end_pos);
 	return 1;
 }
 
@@ -255,7 +255,7 @@ int duk_builtin_string_prototype_substr(duk_context *ctx) {
 	DUK_ASSERT(end_pos >= 0 && end_pos <= len);
 	DUK_ASSERT(end_pos >= start_pos);
 
-	duk_substring(ctx, (size_t) start_pos, (size_t) end_pos);
+	duk_substring(ctx, -1, (size_t) start_pos, (size_t) end_pos);
 	return 1;
 }
 #endif  /* DUK_USE_SECTION_B */
@@ -298,7 +298,7 @@ int duk_builtin_string_prototype_slice(duk_context *ctx) {
 
 	DUK_ASSERT(end_pos >= start_pos);
 
-	duk_substring(ctx, (size_t) start_pos, (size_t) end_pos);
+	duk_substring(ctx, -1, (size_t) start_pos, (size_t) end_pos);
 	return 1;
 }
 
@@ -463,7 +463,7 @@ int duk_builtin_string_prototype_replace(duk_context *ctx) {
 	duk_hstring *h_match;
 	duk_hstring *h_search;
 	duk_hobject *h_re;
-	duk_hbuffer_growable *h_buf;
+	duk_hbuffer_dynamic *h_buf;
 	int is_regexp;
 	int is_global;
 	int is_repl_func;
@@ -476,8 +476,8 @@ int duk_builtin_string_prototype_replace(duk_context *ctx) {
 	duk_push_this_coercible_to_string(ctx);
 	h_input = duk_get_hstring(ctx, -1);
 	DUK_ASSERT(h_input != NULL);
-	duk_push_new_growable_buffer(ctx, 0);
-	h_buf = (duk_hbuffer_growable *) duk_get_hbuffer(ctx, -1);
+	duk_push_dynamic_buffer(ctx, 0);
+	h_buf = (duk_hbuffer_dynamic *) duk_get_hbuffer(ctx, -1);
 	DUK_ASSERT(h_buf != NULL);
 	DUK_ASSERT_TOP(ctx, 4);
 
@@ -770,7 +770,7 @@ int duk_builtin_string_prototype_replace(duk_context *ctx) {
 						goto repl_write;
 					}
 				}  /* default case */
-				}  /* switch(ch2) */
+				}  /* switch (ch2) */
 
 			 repl_write:
 				/* ch1 = (r_increment << 8) + byte */
@@ -821,7 +821,7 @@ int duk_builtin_string_prototype_split(duk_context *ctx) {
 	h_input = duk_get_hstring(ctx, -1);
 	DUK_ASSERT(h_input != NULL);
 
-	duk_push_new_array(ctx);
+	duk_push_array(ctx);
 
 	if (duk_is_undefined(ctx, 1)) {
 		limit = 0xffffffffU;
@@ -1164,7 +1164,7 @@ int duk_builtin_string_prototype_match(duk_context *ctx) {
 
 	duk_push_int(ctx, 0);
 	duk_put_prop_stridx(ctx, 0, DUK_STRIDX_LAST_INDEX);
-	duk_push_new_array(ctx);
+	duk_push_array(ctx);
 
 	/* [ regexp string res_arr ] */
 

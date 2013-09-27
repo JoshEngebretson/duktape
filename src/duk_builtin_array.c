@@ -40,7 +40,7 @@ int duk_builtin_array_constructor(duk_context *ctx) {
 	int i;
 
 	nargs = duk_get_top(ctx);
-	duk_push_new_array(ctx);
+	duk_push_array(ctx);
 
 	if (nargs == 1 && duk_is_number(ctx, 0)) {
 		/* FIXME: expensive check */
@@ -136,7 +136,7 @@ int duk_builtin_array_prototype_concat(duk_context *ctx) {
 	duk_push_this_coercible_to_object(ctx);
 	duk_insert(ctx, 0);
 	n = duk_get_top(ctx);
-	duk_push_new_array(ctx);  /* -> [ ToObject(this) item1 ... itemN arr ] */
+	duk_push_array(ctx);  /* -> [ ToObject(this) item1 ... itemN arr ] */
 
 	idx = 0;
 	for (i = 0; i < n; i++) {
@@ -630,7 +630,7 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 	DUK_ASSERT(del_count >= 0 && del_count <= len - rel_start);
 	DUK_ASSERT(del_count + rel_start <= len);
 
-	duk_push_new_array(ctx);
+	duk_push_array(ctx);
 
 	/* stack[0] = start
 	 * stack[1] = deleteCount
@@ -784,7 +784,7 @@ int duk_builtin_array_prototype_slice(duk_context *ctx) {
 	int i;
 
 	len = push_this_obj_len_u32(ctx);
-	duk_push_new_array(ctx);
+	duk_push_array(ctx);
 
 	/* stack[0] = start
 	 * stack[1] = end
@@ -797,9 +797,16 @@ int duk_builtin_array_prototype_slice(duk_context *ctx) {
 	if (start < 0) {
 		start = len + start;
 	}
-	end = duk_to_int_clamped(ctx, 1, -len, len);
-	if (end < 0) {
-		end = len + end;
+	/* FIXME: could duk_is_undefined() provide defaulting undefined to 'len'
+	 * (the upper limit)?
+	 */
+	if (duk_is_undefined(ctx, 1)) {
+		end = len;
+	} else {
+		end = duk_to_int_clamped(ctx, 1, -len, len);
+		if (end < 0) {
+			end = len + end;
+		}
 	}
 	DUK_ASSERT(start >= 0 && start <= len);
 	DUK_ASSERT(end >= 0 && end <= len);
@@ -1043,7 +1050,7 @@ static int iter_helper(duk_context *ctx, int iter_type) {
 	/* if thisArg not supplied, behave as if undefined was supplied */
 
 	if (iter_type == ITER_MAP || iter_type == ITER_FILTER) {
-		duk_push_new_array(ctx);
+		duk_push_array(ctx);
 	} else {
 		duk_push_undefined(ctx);
 	}

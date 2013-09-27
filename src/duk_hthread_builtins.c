@@ -103,13 +103,16 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 				}
 			}
 
-			duk_push_new_c_function(ctx, c_func, c_nargs);
+			duk_push_c_function(ctx, c_func, c_nargs);
 
 			h = duk_require_hobject(ctx, -1);
 			DUK_ASSERT(h != NULL);
 
-			/* Currently all built-in native functions are strict. */
-			DUK_HOBJECT_SET_STRICT(h);
+			/* Currently all built-in native functions are strict.
+			 * duk_push_c_function() now sets strict flag, so
+			 * assert for it.
+			 */
+			DUK_ASSERT(DUK_HOBJECT_HAS_STRICT(h));
 
 			/* FIXME: function properties */
 
@@ -126,9 +129,9 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 		} else {
 			/* FIXME: ARRAY_PART for Array prototype? */
 
-			duk_push_new_object_helper(ctx,
-			                           DUK_HOBJECT_FLAG_EXTENSIBLE,
-			                           -1);  /* no prototype or class yet */
+			duk_push_object_helper(ctx,
+			                       DUK_HOBJECT_FLAG_EXTENSIBLE,
+			                       -1);  /* no prototype or class yet */
 
 			h = duk_require_hobject(ctx, -1);
 			DUK_ASSERT(h != NULL);
@@ -285,7 +288,7 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 				char *p;
 
 				n = duk_bd_decode(bd, STRING_LENGTH_BITS);
-				p = (char *) duk_push_new_fixed_buffer(ctx, n);
+				p = (char *) duk_push_fixed_buffer(ctx, n);
 				for (k = 0; k < n; k++) {
 					*p++ = duk_bd_decode(bd, STRING_CHAR_BITS);
 				}
@@ -360,9 +363,9 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 
 			/* [ (builtin objects) ] */
 
-			duk_push_new_c_function(ctx, c_func, c_nargs);
+			duk_push_c_function(ctx, c_func, c_nargs);
 			h_func = duk_require_hnativefunction(ctx, -1);
-			h_func = h_func;  /* suppress warning (not referenced now) */
+			DUK_UNREF(h_func);
 
 			/* Currently all built-in native functions are strict.
 			 * This doesn't matter for many functions, but e.g.

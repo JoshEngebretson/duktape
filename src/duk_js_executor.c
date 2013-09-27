@@ -571,10 +571,10 @@ static void handle_catch_or_finally(duk_hthread *thr, int cat_idx, int is_finall
 		DUK_ASSERT(act->lex_env != NULL);
 		DUK_ASSERT(act->func != NULL);
 
-		(void) duk_push_new_object_helper(ctx,
-		                                  DUK_HOBJECT_FLAG_EXTENSIBLE |
-		                                  DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV),
-		                                  -1);  /* no prototype, updated below */
+		(void) duk_push_object_helper(ctx,
+		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV),
+		                              -1);  /* no prototype, updated below */
 		new_env = duk_require_hobject(ctx, -1);
 		DUK_ASSERT(new_env != NULL);
 		DUK_DDDPRINT("new_env allocated: %!iO", new_env);
@@ -2003,7 +2003,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 			tv_key = REGCONSTP(c);
 			DUK_DDDPRINT("GETPROP: a=%d obj=%!T, key=%!T", a, REGCONSTP(b), REGCONSTP(c));
 			rc = duk_hobject_getprop(thr, tv_obj, tv_key);  /* -> [val] */
-			rc = rc;  /* ignore */
+			DUK_UNREF(rc);  /* ignore */
 			DUK_DDDPRINT("GETPROP --> %!T", duk_get_tval(ctx, -1));
 			tv_obj = NULL;  /* invalidated */
 			tv_key = NULL;  /* invalidated */
@@ -2034,7 +2034,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 			tv_val = REGCONSTP(c);
 			DUK_DDDPRINT("PUTPROP: obj=%!T, key=%!T, val=%!T", REGP(a), REGCONSTP(b), REGCONSTP(c));
 			rc = duk_hobject_putprop(thr, tv_obj, tv_key, tv_val, STRICT());
-			rc = rc;  /* ignore */
+			DUK_UNREF(rc);  /* ignore */
 			DUK_DDDPRINT("PUTPROP --> obj=%!T, key=%!T, val=%!T", REGP(a), REGCONSTP(b), REGCONSTP(c));
 			tv_obj = NULL;  /* invalidated */
 			tv_key = NULL;  /* invalidated */
@@ -2085,7 +2085,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 			tv_obj = REGP(b);
 			tv_key = REGCONSTP(c);
 			rc = duk_hobject_getprop(thr, tv_obj, tv_key);  /* -> [val] */
-			rc = rc;  /* unused */
+			DUK_UNREF(rc);  /* unused */
 			tv_obj = NULL;  /* invalidated */
 			tv_key = NULL;  /* invalidated */
 
@@ -2533,7 +2533,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 			DUK_ASSERT(thr->catchstack_top >= 1);
 
 			cat = &thr->catchstack[thr->catchstack_top - 1];
-			cat = cat;  /* suppress warning */
+			DUK_UNREF(cat);
 			DUK_ASSERT(DUK_CAT_GET_TYPE(cat) == DUK_CAT_TYPE_LABEL);
 			DUK_ASSERT(DUK_CAT_GET_LABEL(cat) == abc);
 
@@ -2639,10 +2639,10 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 				}
 				DUK_ASSERT(act->lex_env != NULL);
 
-				(void) duk_push_new_object_helper(ctx,
-				                                  DUK_HOBJECT_FLAG_EXTENSIBLE |
-				                                  DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJENV),
-				                                  -1);  /* no prototype, updated below */
+				(void) duk_push_object_helper(ctx,
+				                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+				                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJENV),
+				                              -1);  /* no prototype, updated below */
 
 				duk_push_tval(ctx, REGCONSTP(c));
 				duk_to_object(ctx, -1);
@@ -2787,7 +2787,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 				duk_context *ctx = (duk_context *) thr;
 				int b = DUK_DEC_B(ins);
 
-				duk_push_new_object(ctx);
+				duk_push_object(ctx);
 				duk_replace(ctx, b);
 				break;
 			}
@@ -2796,7 +2796,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 				duk_context *ctx = (duk_context *) thr;
 				int b = DUK_DEC_B(ins);
 
-				duk_push_new_array(ctx);
+				duk_push_array(ctx);
 				duk_replace(ctx, b);
 				break;
 			}
@@ -2851,7 +2851,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 					duk_pop_2(ctx);
 				} else {
 					/* unresolvable, no stack changes */
-					duk_push_undefined(ctx);
+					duk_push_hstring_stridx(ctx, DUK_STRIDX_UNDEFINED);
 					duk_replace(ctx, b);
 				}
 
@@ -2963,7 +2963,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 				duk_push_undefined(ctx);
 				duk_dup(ctx, b);
 				duk_dup(ctx, c + 0);
-				duk_push_new_object(ctx);  /* -> [ Object defineProperty undefined obj key desc ] */
+				duk_push_object(ctx);  /* -> [ Object defineProperty undefined obj key desc ] */
 
 				duk_push_true(ctx);
 				duk_put_prop_stridx(ctx, -2, DUK_STRIDX_ENUMERABLE);

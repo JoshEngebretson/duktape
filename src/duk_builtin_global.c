@@ -82,7 +82,7 @@ static unsigned char escape_unescaped_table[16] = {
 typedef struct {
 	duk_hthread *thr;
 	duk_hstring *h_str;
-	duk_hbuffer_growable *h_buf;
+	duk_hbuffer_dynamic *h_buf;
 	duk_u8 *p;
 	duk_u8 *p_start;
 	duk_u8 *p_end;
@@ -123,10 +123,10 @@ static int transform_helper(duk_context *ctx, transform_callback callback, void 
 	tfm_ctx->h_str = duk_to_hstring(ctx, 0);
 	DUK_ASSERT(tfm_ctx->h_str != NULL);
 
-	(void) duk_push_new_growable_buffer(ctx, 0);
-	tfm_ctx->h_buf = (duk_hbuffer_growable *) duk_get_hbuffer(ctx, -1);
+	(void) duk_push_dynamic_buffer(ctx, 0);
+	tfm_ctx->h_buf = (duk_hbuffer_dynamic *) duk_get_hbuffer(ctx, -1);
 	DUK_ASSERT(tfm_ctx->h_buf != NULL);
-	DUK_ASSERT(DUK_HBUFFER_HAS_GROWABLE(tfm_ctx->h_buf));
+	DUK_ASSERT(DUK_HBUFFER_HAS_DYNAMIC(tfm_ctx->h_buf));
 
 	tfm_ctx->p_start = DUK_HSTRING_GET_DATA(tfm_ctx->h_str);
 	tfm_ctx->p_end = tfm_ctx->p_start + DUK_HSTRING_GET_BYTELEN(tfm_ctx->h_str);
@@ -446,10 +446,10 @@ int duk_builtin_global_object_eval(duk_context *ctx) {
 			             "var_env and lex_env to a fresh env, "
 			             "this_binding to caller's this_binding");
 
-			(void) duk_push_new_object_helper(ctx,
-			                                  DUK_HOBJECT_FLAG_EXTENSIBLE |
-			                                  DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV),
-			                                  -1);  /* no prototype, updated below */
+			(void) duk_push_object_helper(ctx,
+			                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+			                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DECENV),
+			                              -1);  /* no prototype, updated below */
 			new_env = duk_require_hobject(ctx, -1);
 			DUK_ASSERT(new_env != NULL);
 			DUK_DDDPRINT("new_env allocated: %!iO", new_env);

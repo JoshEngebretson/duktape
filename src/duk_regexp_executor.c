@@ -463,8 +463,8 @@ static duk_u8 *match_regexp(duk_re_matcher_ctx *re_ctx, duk_u8 *pc, duk_u8 *sp) 
 			DUK_ASSERT(re_ctx->nsaved > 0);
 
 			duk_require_stack((duk_context *) re_ctx->thr, 1);
-			full_save = duk_push_new_fixed_buffer((duk_context *) re_ctx->thr,
-			                                      sizeof(duk_u8 *) * re_ctx->nsaved);
+			full_save = duk_push_fixed_buffer((duk_context *) re_ctx->thr,
+			                                   sizeof(duk_u8 *) * re_ctx->nsaved);
 			DUK_ASSERT(full_save != NULL);
 			memcpy(full_save, re_ctx->saved, sizeof(duk_u8 *) * re_ctx->nsaved);
 
@@ -609,7 +609,7 @@ static void regexp_match_helper(duk_hthread *thr, int force_global) {
 	h_regexp = duk_require_hobject_with_class(ctx, -2, DUK_HOBJECT_CLASS_REGEXP);
 	DUK_ASSERT(h_regexp != NULL);
 	DUK_ASSERT(DUK_HOBJECT_GET_CLASS_NUMBER(h_regexp) == DUK_HOBJECT_CLASS_REGEXP);
-	h_regexp = h_regexp;  /* suppress warning */
+	DUK_UNREF(h_regexp);
 
 	duk_to_string(ctx, -1);
 	h_input = duk_get_hstring(ctx, -1);
@@ -653,7 +653,7 @@ static void regexp_match_helper(duk_hthread *thr, int force_global) {
 	DUK_ASSERT(re_ctx.nsaved >= 2);
 	DUK_ASSERT((re_ctx.nsaved % 2) == 0);
 
-	duk_push_new_fixed_buffer(ctx, sizeof(duk_u8 *) * re_ctx.nsaved);
+	duk_push_fixed_buffer(ctx, sizeof(duk_u8 *) * re_ctx.nsaved);
 	re_ctx.saved = duk_get_buffer(ctx, -1, NULL);
 	DUK_ASSERT(re_ctx.saved != NULL);
 
@@ -810,7 +810,7 @@ static void regexp_match_helper(duk_hthread *thr, int force_global) {
 		 * short lived.
 		 */
 
-		duk_push_new_array(ctx);
+		duk_push_array(ctx);
 
 #ifdef DUK_USE_ASSERTIONS
 		h_res = duk_require_hobject(ctx, -1);

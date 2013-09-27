@@ -37,7 +37,7 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 
 	DUK_DDDPRINT("adding traceback to object: %!O", (duk_heaphdr *) obj);
 
-	duk_push_new_array(ctx);  /* XXX: specify array size, as we know it */
+	duk_push_array(ctx);  /* XXX: specify array size, as we know it */
 
 	depth = DUK_OPT_TRACEBACK_DEPTH;
 	i_min = (thr_callstack->callstack_top > depth ? thr_callstack->callstack_top - depth : 0);
@@ -169,7 +169,7 @@ void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err
 				duk_get_prop_stridx(ctx, -1, DUK_STRIDX_INT_PC2LINE);
 				if (duk_is_buffer(ctx, -1)) {
 					pc2line = duk_get_hbuffer(ctx, -1);
-					DUK_ASSERT(!DUK_HBUFFER_HAS_GROWABLE(pc2line));
+					DUK_ASSERT(!DUK_HBUFFER_HAS_DYNAMIC(pc2line));
 					line = duk_hobject_pc2line_query((duk_hbuffer_fixed *) pc2line, pc);
 					duk_push_number(ctx, (double) line);  /* FIXME: u32 */
 					duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_LINE_NUMBER);

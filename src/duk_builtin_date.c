@@ -12,17 +12,12 @@
 
 /*
  *  Platform specific includes and defines
+ *
+ *  Note that necessary system headers (like <sys/time.h>) are included
+ *  by duk_internal.h (or duk_features.h, which is included by duk_internal.h)
+ *  because the header locations vary between systems and we don't want
+ *  that clutter here.
  */
-
-#if defined(DUK_USE_DATE_NOW_GETTIMEOFDAY)
-#include <sys/time.h>
-#endif
-
-#if defined(DUK_USE_DATE_TZO_GMTIME) || \
-    defined(DUK_USE_DATE_PRS_STRPTIME) || \
-    defined(DUK_USE_DATE_FMT_STRFTIME)
-#include <time.h>
-#endif
 
 #if defined(DUK_USE_DATE_NOW_GETTIMEOFDAY)
 #define  GET_NOW_TIMEVAL      get_now_timeval_gettimeofday
@@ -1292,10 +1287,10 @@ int duk_builtin_date_constructor(duk_context *ctx) {
 
 	DUK_DDDPRINT("Date constructor, nargs=%d, is_cons=%d", nargs, is_cons);
 
-	duk_push_new_object_helper(ctx,
-	                           DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                           DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DATE),
-	                           DUK_BIDX_DATE_PROTOTYPE);
+	duk_push_object_helper(ctx,
+	                       DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                       DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_DATE),
+	                       DUK_BIDX_DATE_PROTOTYPE);
 
 	/* Unlike most built-ins, the internal [[PrimitiveValue]] of a Date
 	 * is mutable.

@@ -8,7 +8,28 @@
 #ifndef DUK_INTERNAL_H_INCLUDED
 #define DUK_INTERNAL_H_INCLUDED
 
-/* these need to be cleaned up eventually to be more precise */
+/*
+ *  Feature selection defines (e.g. _XOPEN_SOURCE) must appear before any
+ *  system headers are included.  On the other hand, some platform detection
+ *  requires header inclusion (like <endian.h>).  The current approach is
+ *  that duk_features.h is included first, and it is responsible for doing
+ *  feature selection before including any other headers it needs.
+ *
+ *  In any case, all implementation files include duk_internal.h first, so
+ *  feature selection defines get set correctly.
+ */
+
+#include "duk_features.h"
+
+/*
+ *  System includes
+ *
+ *  This is currently the set of headers that we include on all platforms.
+ *  Platform specific headers are included in duk_features.h.  The set of
+ *  included files should be more precise, so perhaps these all should go
+ *  to duk_features.h.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +38,10 @@
 #include <stddef.h>  /* e.g. ptrdiff_t */
 #include <stdint.h>
 
-#include "duk_features.h"
+/*
+ *  Duktape includes (other than duk_features.h)
+ */
+
 #include "duk_misc.h"
 #include "duk_rdtsc.h"
 #include "duk_bittypes.h"
@@ -29,7 +53,7 @@
 #include "duk_regexp.h"
 #include "duk_tval.h"
 #include "duk_heaphdr.h"
-#include "duk_api.h"
+#include "duktape.h"
 #include "duk_api_internal.h"
 #include "duk_hstring.h"
 #include "duk_hobject.h"

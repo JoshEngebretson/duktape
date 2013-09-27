@@ -507,9 +507,10 @@ static void parse_input_element_raw(duk_lexer_ctx *lex_ctx,
                                     duk_token *out_token,
                                     int strict_mode,
                                     int regexp_mode) {
-	int x, y;		/* temporaries, must be 32-bit to hold Unicode code points */
-	int advtok;		/* (advance << 8) + token_type, updated at function end */
-
+	int x, y;               /* temporaries, must be 32-bit to hold Unicode code points */
+	int advtok = 0;         /* (advance << 8) + token_type, updated at function end,
+	                         * init is unnecessary but suppresses "may be used uninitialized warnings
+	                         */
 	eat_whitespace(lex_ctx);
 
 	out_token->t = DUK_TOK_EOF;
@@ -1311,7 +1312,7 @@ void duk_lexer_parse_js_input_element(duk_lexer_ctx *lex_ctx,
  */
 
 void duk_lexer_parse_re_token(duk_lexer_ctx *lex_ctx, duk_re_token *out_token) {
-	int advtok;
+	int advtok = 0;  /* init is unnecessary but suppresses "may be used uninitialized" warnings */
 	int x, y;
 
 	memset(out_token, 0, sizeof(*out_token));
@@ -1521,8 +1522,11 @@ void duk_lexer_parse_re_token(duk_lexer_ctx *lex_ctx, duk_re_token *out_token) {
 			}
 		} else if (!duk_unicode_is_identifier_part(y) ||
 		           y == DUK_UNICODE_CP_ZWNJ ||
-		           y == DUK_UNICODE_CP_ZWJ) {
-			/* IdentityEscape */
+		           y == DUK_UNICODE_CP_ZWJ ||
+		           y == '$') {
+			/* IdentityEscape, with dollar added as a valid additional
+			 * non-standard escape (see test-regexp-identity-escape-dollar.js).
+			 */
 			out_token->num = y;
 		} else {
 			DUK_ERROR(lex_ctx->thr, DUK_ERR_SYNTAX_ERROR,

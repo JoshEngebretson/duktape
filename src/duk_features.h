@@ -1,10 +1,22 @@
 /*
- *  Determines the build-time feature defines to be used, based on
- *  DUK_PROFILE, other user-supplied defines, and feature detection.
- *  Defines individual DUK_USE_XXX defines which are (only) checked
- *  in internal code.
+ *  Determine platform features, select feature selection defines
+ *  (e.g. _XOPEN_SOURCE), and define DUK_USE_XXX defines which are
+ *  (only) checked in Duktape internal code for activated features.
+ *  Duktape feature selection is based on DUK_PROFILE, other user
+ *  supplied defines, and automatic feature detection.
  *
- *  This is included before anything else.
+ *  This is included before anything else.  Feature selection defines
+ *  (e.g. _XOPEN_SOURCE) must be defined before any system headers
+ *  are included.  This file is included by duk_internal.h before it
+ *  includes anything else.  We're responsible for first setting feature
+ *  selection defines but after that we can include other headers as
+ *  needed.
+ *
+ *  Useful resources:
+ *
+ *    http://sourceforge.net/p/predef/wiki/Home/
+ *    http://sourceforge.net/p/predef/wiki/Architectures/
+ *    http://stackoverflow.com/questions/5919996/how-to-detect-reliably-mac-os-x-ios-linux-windows-in-c-preprocessor
  *
  *  FIXME: at the moment there is no direct way of configuring
  *  or overriding individual settings.
@@ -15,8 +27,12 @@
 
 #include "duk_rdtsc.h"  /* DUK_RDTSC_AVAILABLE */
 
+/* FIXME: remove _DUK_C99 and _DUK_BSD, prefer no names beginning with
+ * underscore.
+ */
+
 /*
- *  Feature detection (produce feature defines, but don't use them yet)
+ *  Compiler features
  */
 
 #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L)
@@ -24,6 +40,117 @@
 #else
 #undef   _DUK_C99
 #endif
+
+/*
+ *  Intermediate platform detection
+ */
+
+/* FIXME: reconcile with direct detection below */
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD) || \
+    defined(__bsdi__) || defined(__DragonFly__)
+#define  _DUK_BSD
+#endif
+
+/*
+ *  Feature selection defines (e.g. _XOPEN_SOURCE)
+ *
+ *  MUST be set before ANY system headers are included!
+ */
+
+#if defined(__linux)
+#define  _POSIX_C_SOURCE  200809L
+#define  _GNU_SOURCE      /* e.g. getdate_r */
+#define  _XOPEN_SOURCE    /* e.g. strptime */
+#endif
+
+/*
+ *  Byte order and double memory layout detection
+ *
+ *  This needs to be done before choosing a default profile, as it affects
+ *  profile selection.
+ */
+
+/* FIXME: Not very good detection right now, expect to find __BYTE_ORDER
+ * and __FLOAT_WORD_ORDER or resort to GCC/ARM specifics.  Improve the
+ * detection code and perhaps allow some compiler define to override the
+ * detection for unhandled cases.
+ */
+
+#if defined(__APPLE__)
+#include <architecture/byte_order.h>
+#elif defined(_DUK_BSD)
+#include <sys/endian.h>
+#else
+/* Linux and hopefully others */
+#include <endian.h>
+#endif
+
+#include <limits.h>
+#include <sys/param.h>
+
+/* determine endianness variant: little-endian (LE), big-endian (BE), or "middle-endian" (ME) i.e. ARM */
+#if (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || \
+    (defined(__LITTLE_ENDIAN__))
+#if defined(__FLOAT_WORD_ORDER) && defined(__LITTLE_ENDIAN) && (__FLOAT_WORD_ORDER == __LITTLE_ENDIAN) || \
+    (defined(__GNUC__) && !defined(__arm__))
+#define DUK_USE_DOUBLE_LE
+#elif (defined(__FLOAT_WORD_ORDER) && defined(__BIG_ENDIAN) && (__FLOAT_WORD_ORDER == __BIG_ENDIAN)) || \
+      (defined(__GNUC__) && defined(__arm__))
+#define DUK_USE_DOUBLE_ME
+#else
+#error unsupported: byte order is little endian but cannot determine IEEE double word order
+#endif
+#elif (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && (__BYTE_ORDER == __BIG_ENDIAN)) || \
+      (defined(__BIG_ENDIAN__))
+#if (defined(__FLOAT_WORD_ORDER) && defined(__BIG_ENDIAN) && (__FLOAT_WORD_ORDER == __BIG_ENDIAN)) || \
+    (defined(__GNUC__) && !defined(__arm__))
+#define DUK_USE_DOUBLE_BE
+#else
+#error unsupported: byte order is big endian but cannot determine IEEE double word order
+#endif
+#else
+#error unsupported: cannot determine byte order
+#endif
+
+#if !defined(DUK_USE_DOUBLE_LE) && !defined(DUK_USE_DOUBLE_ME) && !defined(DUK_USE_DOUBLE_BE)
+#error unsupported: cannot determine IEEE double byte order variant
+#endif
+
+/*
+ *  Check whether or not a packed duk_tval representation is possible
+ */
+
+/* best effort viability checks, not particularly accurate */
+#if (defined(__WORDSIZE) && (__WORDSIZE == 32)) && \
+    (defined(UINT_MAX) && (UINT_MAX == 4294967295))
+#define DUK_USE_PACKED_TVAL_POSSIBLE
+#else
+#undef  DUK_USE_PACKED_TVAL_POSSIBLE
+#endif
+
+/*
+ *  Support for unaligned accesses
+ */
+
+/* FIXME: currently just a hack for ARM, what would be a good way to detect? */
+#if defined(__arm__) || defined(__thumb__) || defined(_ARM) || defined(_M_ARM)
+#undef   DUK_USE_UNALIGNED_ACCESSES_POSSIBLE
+#else
+#define  DUK_USE_UNALIGNED_ACCESSES_POSSIBLE
+#endif
+
+/*
+ *  Macro for suppressing warnings for potentially unreferenced variables.
+ *  The variables can be actually unreferenced or unreferenced in some
+ *  specific cases only; for instance, if a variable is only debug printed,
+ *  it is unreferenced when debug printing is disabled.
+ *
+ *  (Introduced here because it's potentially compiler specific.)
+ */
+
+#define  DUK_UNREF(x)  do { \
+		(void) (x); \
+	} while (0)
 
 /* 
  *  Profile processing
@@ -43,7 +170,11 @@
  */
 
 #if !defined(DUK_PROFILE)
+#if defined(DUK_USE_PACKED_TVAL_POSSIBLE)
 #define  DUK_PROFILE  100
+#else
+#define  DUK_PROFILE  400
+#endif
 #endif
 
 #if (DUK_PROFILE > 0)
@@ -68,8 +199,6 @@
 #undef   DUK_USE_VARIADIC_MACROS                    /* feature determination below */
 #define  DUK_USE_PROVIDE_DEFAULT_ALLOC_FUNCTIONS
 #undef   DUK_USE_EXPLICIT_NULL_INIT
-#define  DUK_USE_HASHBYTES_UNALIGNED_U32_ACCESS     /* FIXME: platform dependent */
-#define  DUK_USE_HOBJECT_UNALIGNED_LAYOUT           /* FIXME: platform dependent */
 #define  DUK_USE_REGEXP_SUPPORT
 #define  DUK_USE_STRICT_UTF8_SOURCE
 #define  DUK_USE_OCTAL_SUPPORT
@@ -77,6 +206,15 @@
 #define  DUK_USE_DPRINT_COLORS
 #define  DUK_USE_BROWSER_LIKE
 #define  DUK_USE_SECTION_B
+
+/* unaligned accesses */
+#ifdef DUK_USE_UNALIGNED_ACCESSES_POSSIBLE
+#define  DUK_USE_HASHBYTES_UNALIGNED_U32_ACCESS
+#define  DUK_USE_HOBJECT_UNALIGNED_LAYOUT
+#else
+#undef   DUK_USE_HASHBYTES_UNALIGNED_U32_ACCESS
+#undef   DUK_USE_HOBJECT_UNALIGNED_LAYOUT
+#endif
 
 /* profile specific modifications */
 
@@ -176,7 +314,7 @@
 #define  DUK_USE_STRUCT_HACK  /* non-portable */
 #endif
 
-/* FIXME: GCC pragma inside a function fails in some earlier GCC versions.
+/* FIXME: GCC pragma inside a function fails in some earlier GCC versions (e.g. gcc 4.5).
  * This is very approximate but allows clean builds for development right now.
  */
 /* http://gcc.gnu.org/onlinedocs/cpp/Common-Predefined-Macros.html */
@@ -186,10 +324,31 @@
 #undef  DUK_USE_GCC_PRAGMAS
 #endif
 
+/* Some math functions are C99 only.  This is also an issue with some
+ * embedded environments using uclibc where uclibc has been configured
+ * not to provide some functions.  For now, use replacements whenever
+ * using uclibc.
+ */
+#if defined(_DUK_C99) && !defined(__UCLIBC__)
+#define  DUK_USE_MATH_FMIN
+#define  DUK_USE_MATH_FMAX
+#define  DUK_USE_MATH_ROUND
+#else
+#undef  DUK_USE_MATH_FMIN
+#undef  DUK_USE_MATH_FMAX
+#undef  DUK_USE_MATH_ROUND
+#endif
+
 /*
- *  Platform specific defines
+ *  Date built-in platform primitive selection
  *
- *  http://stackoverflow.com/questions/5919996/how-to-detect-reliably-mac-os-x-ios-linux-windows-in-c-preprocessor
+ *  This is a direct platform dependency which is difficult to eliminate.
+ *  Select provider through defines, and then include necessary system
+ *  headers so that duk_builtin_date.c compiles.
+ *
+ *  FIXME: add a way to provide custom functions to provide the critical
+ *  primitives; this would be convenient when porting to unknown platforms
+ *  (rather than muck with Duktape internals).
  */
 
 /* NOW = getting current time (required)
@@ -232,6 +391,20 @@
 #error platform not supported
 #endif
 
+#if defined(DUK_USE_DATE_NOW_GETTIMEOFDAY)
+#include <sys/time.h>
+#endif
+
+#if defined(DUK_USE_DATE_TZO_GMTIME) || \
+    defined(DUK_USE_DATE_PRS_STRPTIME) || \
+    defined(DUK_USE_DATE_FMT_STRFTIME)
+/* just a sanity check */
+#if defined(__linux) && !defined(_XOPEN_SOURCE)
+#error expected _XOPEN_SOURCE to be defined here
+#endif
+#include <time.h>
+#endif
+
 #else  /* DUK_PROFILE > 0 */
 
 /*
@@ -244,9 +417,9 @@
 /* FIXME: An alternative approach to customization would be to include
  * some user define file at this point.  The user file could then modify
  * the base settings.  Something like:
-#ifdef DUK_CUSTOM_HEADER
-#include "duk_custom.h"
-#endif
+ * #ifdef DUK_CUSTOM_HEADER
+ * #include "duk_custom.h"
+ * #endif
  */
 
 /*

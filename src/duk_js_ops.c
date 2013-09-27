@@ -63,7 +63,7 @@
  */
 
 int duk_js_toboolean(duk_tval *tv) {
-	switch(DUK_TVAL_GET_TAG(tv)) {
+	switch (DUK_TVAL_GET_TAG(tv)) {
 	case DUK_TAG_UNDEFINED:
 	case DUK_TAG_NULL:
 		return 0;
@@ -1232,7 +1232,7 @@ duk_u32 duk_js_to_arrayindex_string_helper(duk_hstring *h) {
 	rc = raw_string_to_arrayindex(DUK_HSTRING_GET_DATA(h),
 	                              DUK_HSTRING_GET_BYTELEN(h),
 	                              &res);
-	rc = rc;
+	DUK_UNREF(rc);
 	DUK_ASSERT(rc != 0);
 	return res;
 }

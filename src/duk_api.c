@@ -10,6 +10,38 @@
 #include "duk_internal.h"
 
 /*
+ *  Helpers
+ */
+
+static int api_coerce_d2i(double d) {
+	/*
+	 *  Special cases like NaN and +/- Infinity are handled explicitly
+	 *  because a plain C coercion from double to int handles these cases
+	 *  in undesirable ways.  For instance, NaN may coerce to INT_MIN
+	 *  (not zero), and INT_MAX + 1 may coerce to INT_MIN (not INT_MAX).
+	 *
+	 *  This double-to-int coercion differs from ToInteger() because it
+	 *  has a finite range (ToInteger() allows e.g. +/- Infinity).  It
+	 *  also differs from ToInt32() because the INT_MIN/INT_MAX clamping
+	 *  depends on the size of the int type on the platform.  In particular,
+	 *  on platforms with a 64-bit int type, the full range is allowed.
+	 */
+
+	if (fpclassify(d) == FP_NAN) {
+		return 0;
+	} else if (d < INT_MIN) {
+		/* covers -Infinity */
+		return INT_MIN;
+	} else if (d > INT_MAX) {
+		/* covers +Infinity */
+		return INT_MAX;
+	} else {
+		/* coerce towards zero */
+		return (int) d;
+	}
+}
+
+/*
  *  Stack indexes and stack size management
  */
 
@@ -18,8 +50,12 @@ int duk_normalize_index(duk_context *ctx, int index) {
 	duk_tval *tv;
 
 	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(DUK_INVALID_INDEX < 0);
 
 	if (index < 0) {
+		if (index == DUK_INVALID_INDEX) {
+			goto fail;
+		}
 		tv = thr->valstack_top + index;
 		DUK_ASSERT(tv < thr->valstack_top);
 		if (tv < thr->valstack_bottom) {
@@ -48,12 +84,13 @@ int duk_require_normalize_index(duk_context *ctx, int index) {
 
 	ret = duk_normalize_index(ctx, index);
 	if (ret < 0) {
-		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid stack index: %d", index);
+		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid index: %d", index);
 	}
 	return ret;
 }
 
 int duk_is_valid_index(duk_context *ctx, int index) {
+	DUK_ASSERT(DUK_INVALID_INDEX < 0);
 	return (duk_normalize_index(ctx, index) >= 0);
 }
 
@@ -61,9 +98,10 @@ void duk_require_valid_index(duk_context *ctx, int index) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 
 	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(DUK_INVALID_INDEX < 0);
 
 	if (duk_normalize_index(ctx, index) < 0) {
-		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid stack index: %d", index);
+		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid index: %d", index);
 	}
 }
 
@@ -81,20 +119,38 @@ void duk_set_top(duk_context *ctx, int index) {
 	duk_tval *tv_new_top;
 
 	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(DUK_INVALID_INDEX < 0);
+
+	/* FIXME: the pointer arithmetic here is not safe on a 32-bit platform,
+	 * as it may wrap.  For instance, with 8-byte values, the index 0x20000000
+	 * will wrap and be equivalent to index 0; with 12-byte values, the index
+	 * 0x15555556 will wrap to +8 bytes and does not even wrap evenly to a
+	 * duk_tval boundary!  A correct check would first impose a min/max index
+	 * which guarantees that there is only one "round" of wrapping at most,
+	 * and then wrapping needs to be detected because we don't want the value
+	 * stack to be wrapped around end-of-memory.
+	 */
 
 	if (index < 0) {
+		if (index == DUK_INVALID_INDEX) {
+			goto invalid_index;
+		}
 		tv_new_top = thr->valstack_top + index;
-		if (tv_new_top < thr->valstack_bottom) {
-			DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid index: %d", index);
-		}
 	} else {
-		/* may be higher than valstack_top */
+		/* may be higher than valstack_top, but not higher than
+		 * allocated stack
+		 */
 		tv_new_top = thr->valstack_bottom + index;
+	}
 
-		/* ... but not higher than allocated stack */
-		if (tv_new_top > thr->valstack_end) {
-			DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid index: %d", index);
-		}
+	/* Check both ends: for extreme values the pointer arithmetic may wrap.
+	 * The check doesn't detect wrapping so it's technically incorrect.
+	 */
+	if (tv_new_top < thr->valstack_bottom) {
+		goto invalid_index;
+	}
+	if (tv_new_top > thr->valstack_end) {
+		goto invalid_index;
 	}
 
 	if (tv_new_top >= thr->valstack_top) {
@@ -128,6 +184,10 @@ void duk_set_top(duk_context *ctx, int index) {
 			pdiff -= sizeof(duk_tval);
 		}
 	}
+	return;
+
+ invalid_index:
+	DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid index: %d", index);
 }
 
 int duk_get_top_index(duk_context *ctx) {
@@ -639,7 +699,7 @@ void duk_xmove(duk_context *ctx, duk_context *from_ctx, unsigned int count) {
 }
 
 /*
- *  Getters
+ *  Get/require
  */
 
 /* internal */
@@ -648,8 +708,12 @@ duk_tval *duk_get_tval(duk_context *ctx, int index) {
 	duk_tval *tv;
 
 	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(DUK_INVALID_INDEX < 0);
 
 	if (index < 0) {
+		if (index == DUK_INVALID_INDEX) {
+			return NULL;
+		}
 		tv = thr->valstack_top + index;
 		DUK_ASSERT(tv < thr->valstack_top);
 		if (tv < thr->valstack_bottom) {
@@ -670,8 +734,16 @@ duk_tval *duk_require_tval(duk_context *ctx, int index) {
 	duk_tval *tv;
 
 	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(DUK_INVALID_INDEX < 0);
 
 	if (index < 0) {
+		if (index == DUK_INVALID_INDEX) {
+			/* XXX: this check may not be necessary
+			 * on some architectures but be careful
+			 * of wrapping.
+			 */
+			goto fail;
+		}
 		tv = thr->valstack_top + index;
 		DUK_ASSERT(tv < thr->valstack_top);
 		if (tv < thr->valstack_bottom) {
@@ -801,30 +873,13 @@ double duk_require_number(duk_context *ctx, int index) {
 }
 
 int duk_get_int(duk_context *ctx, int index) {
-	/*
-	 *  Notes:
-	 *    - This is only marginally shorter on x86 than the cut-paste
-	 *      alternative.
-	 *    - NAN (duk_get_number() default value) is explicitly coerced
-	 *      to zero, our default (just doing '(int) d' for a NAN does
-	 *      *not* coerce to zero, but can be e.g. INT_MIN).
-	 */
-
-	/* FIXME: how should -Inf, Inf be coerced?  Manually to INT_MIN and
-	 * INT_MAX; or rely on the automatic C semantics?
-	 */
-
-	double d = duk_get_number(ctx, index);
-
-	if (fpclassify(d) == FP_NAN) {
-		return 0;
-	} else {
-		return (int) d;
-	}
+	/* Custom coercion for API */
+	return api_coerce_d2i(duk_get_number(ctx, index));
 }
 
 int duk_require_int(duk_context *ctx, int index) {
-	return (int) duk_require_number(ctx, index);
+	/* Custom coercion for API */
+	return api_coerce_d2i(duk_require_number(ctx, index));
 }
 
 const char *duk_get_lstring(duk_context *ctx, int index, size_t *out_len) {
@@ -861,6 +916,9 @@ const char *duk_require_lstring(duk_context *ctx, int index, size_t *out_len) {
 
 	DUK_ASSERT(ctx != NULL);
 
+	/* Note: this check relies on the fact that even a zero-size string
+	 * has a non-NULL pointer.
+	 */
 	ret = duk_get_lstring(ctx, index, out_len);
 	if (ret) {
 		return ret;
@@ -894,6 +952,25 @@ void *duk_get_pointer(duk_context *ctx, int index) {
 	}
 
 	return NULL;
+}
+
+void *duk_require_pointer(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+
+	DUK_ASSERT(ctx != NULL);
+
+	/* Note: here we must be wary of the fact that a pointer may be
+	 * valid and be a NULL.
+	 */
+	tv = duk_get_tval(ctx, index);
+	if (tv && DUK_TVAL_IS_POINTER(tv)) {
+		void *p = DUK_TVAL_GET_POINTER(tv);  /* may be NULL */
+		return (void *) p;
+	}
+
+	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "not pointer");
+	return NULL;  /* not reachable */
 }
 
 void *duk_get_voidptr(duk_context *ctx, int index) {
@@ -935,19 +1012,31 @@ void *duk_get_buffer(duk_context *ctx, int index, size_t *out_size) {
 
 void *duk_require_buffer(duk_context *ctx, int index, size_t *out_size) {
 	duk_hthread *thr = (duk_hthread *) ctx;
-	void *ret;
+	duk_tval *tv;
 
 	DUK_ASSERT(ctx != NULL);
 
-	ret = duk_get_buffer(ctx, index, out_size);
-	if (ret) {
-		return ret;
+	if (out_size != NULL) {
+		*out_size = 0;
+	}
+
+	/* Note: here we must be wary of the fact that a data pointer may
+	 * be a NULL for a zero-size buffer.
+	 */
+	
+	tv = duk_get_tval(ctx, index);
+	if (tv && DUK_TVAL_IS_BUFFER(tv)) {
+		duk_hbuffer *h = DUK_TVAL_GET_BUFFER(tv);
+		DUK_ASSERT(h != NULL);
+		if (out_size) {
+			*out_size = DUK_HBUFFER_GET_SIZE(h);
+		}
+		return (void *) DUK_HBUFFER_GET_DATA_PTR(h);  /* may be NULL (but only if size is 0) */
 	}
 
 	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "not buffer");
 	return NULL;  /* not reachable */
 }
-
 
 /* internal */
 /* FIXME: allow_null can be baked into 'tag' */
@@ -1259,7 +1348,567 @@ size_t duk_get_length(duk_context *ctx, int index) {
 
 	return 0;
 }
- 
+
+/*
+ *  Conversions and coercions
+ *
+ *  The conversion/coercions are in-place operations on the value stack.
+ *  Some operations are implemented here directly, while others call a
+ *  helper in duk_js_ops.c after validating arguments.
+ */
+
+/* E5 Section 8.12.8 */
+
+static int defaultvalue_coerce_attempt(duk_context *ctx, int index, int func_stridx) {
+	if (duk_get_prop_stridx(ctx, index, func_stridx)) {
+		/* [ ... func ] */
+		if (duk_is_callable(ctx, -1)) {
+			duk_dup(ctx, index);         /* -> [ ... func this ] */
+			duk_call_method(ctx, 0);     /* -> [ ... retval ] */
+			if (duk_is_primitive(ctx, -1)) {
+				duk_replace(ctx, index);
+				return 1;
+			}
+			/* [ ... retval ]; popped below */
+		}
+	}
+	duk_pop(ctx);  /* [ ... func/retval ] -> [ ... ] */
+	return 0;
+}
+
+void duk_to_defaultvalue(duk_context *ctx, int index, int hint) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_hobject *obj;
+	int coercers[] = { DUK_STRIDX_VALUE_OF, DUK_STRIDX_TO_STRING };
+
+	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(thr != NULL);
+
+	index = duk_require_normalize_index(ctx, index);
+
+	if (!duk_is_object(ctx, index)) {
+		DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "not object");
+	}
+	obj = duk_get_hobject(ctx, index);
+	DUK_ASSERT(obj != NULL);
+
+	if (hint == DUK_HINT_NONE) {
+		if (DUK_HOBJECT_GET_CLASS_NUMBER(obj) == DUK_HOBJECT_CLASS_DATE) {
+			hint = DUK_HINT_STRING;
+		} else {
+			hint = DUK_HINT_NUMBER;
+		}
+	}
+
+	if (hint == DUK_HINT_STRING) {
+		coercers[0] = DUK_STRIDX_TO_STRING;
+		coercers[1] = DUK_STRIDX_VALUE_OF;
+	}
+
+	if (defaultvalue_coerce_attempt(ctx, index, coercers[0])) {
+		return;
+	}
+
+	if (defaultvalue_coerce_attempt(ctx, index, coercers[1])) {
+		return;
+	}
+
+	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "failed to coerce with [[DefaultValue]]");
+}
+
+void duk_to_undefined(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+
+	DUK_ASSERT(ctx != NULL);
+	DUK_UNREF(thr);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_UNDEFINED_ACTUAL(tv);
+	DUK_TVAL_DECREF(thr, &tv_temp);
+}
+
+void duk_to_null(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+
+	DUK_ASSERT(ctx != NULL);
+	DUK_UNREF(thr);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NULL(tv);
+	DUK_TVAL_DECREF(thr, &tv_temp);
+}
+
+/* E5 Section 9.1 */
+void duk_to_primitive(duk_context *ctx, int index, int hint) {
+	duk_tval *tv;
+
+	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(hint == DUK_HINT_NONE || hint == DUK_HINT_NUMBER || hint == DUK_HINT_STRING);
+
+	index = duk_require_normalize_index(ctx, index);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+
+	if (DUK_TVAL_GET_TAG(tv) != DUK_TAG_OBJECT) {
+		/* everything except object stay as is */
+		return;
+	}
+	DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
+
+	duk_to_defaultvalue(ctx, index, hint);
+}
+
+/* E5 Section 9.2 */
+int duk_to_boolean(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	int val;
+
+	DUK_ASSERT(ctx != NULL);
+	DUK_UNREF(thr);
+
+	index = duk_require_normalize_index(ctx, index);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+
+	val = duk_js_toboolean(tv);
+
+	/* Note: no need to re-lookup tv, conversion is side effect free */
+	DUK_ASSERT(tv != NULL);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_BOOLEAN(tv, val);
+	DUK_TVAL_DECREF(thr, &tv_temp);
+	return val;
+}
+
+double duk_to_number(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	double d;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	d = duk_js_tonumber(thr, tv);
+
+	/* Note: need to re-lookup because ToNumber() may have side effects */
+	tv = duk_require_tval(ctx, index);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NUMBER(tv, d);  /* no need to incref */
+	DUK_TVAL_DECREF(thr, &tv_temp);
+
+	return d;
+}
+
+/* FIXME: combine all the integer conversions: they share everything
+ * but the helper function for coercion.
+ */
+
+int duk_to_int(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	double d;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	d = duk_js_tointeger(thr, tv);  /* E5 Section 9.4, ToInteger() */
+
+	/* relookup in case duk_js_tointeger() ends up e.g. coercing an object */
+	tv = duk_require_tval(ctx, index);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NUMBER(tv, d);  /* no need to incref */
+	DUK_TVAL_DECREF(thr, &tv_temp);
+
+	/* Custom coercion for API */
+	return api_coerce_d2i(d);
+}
+
+int duk_to_int32(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	double d;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	d = (double) duk_js_toint32(thr, tv);
+
+	/* must relookup */
+	tv = duk_require_tval(ctx, index);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NUMBER(tv, d);  /* no need to incref */
+	DUK_TVAL_DECREF(thr, &tv_temp);
+
+	/* ToInt32() should already have restricted the result to
+	 * an acceptable range (unless 'int' is less than 32 bits).
+	 */
+	return (int) d;
+}
+
+unsigned int duk_to_uint32(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	double d;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	d = (double) duk_js_touint32(thr, tv);
+
+	/* must relookup */
+	tv = duk_require_tval(ctx, index);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NUMBER(tv, d);  /* no need to incref */
+	DUK_TVAL_DECREF(thr, &tv_temp);
+
+	/* ToUint32() should already have restricted the result to
+	 * an acceptable range (unless 'unsigned int' is less than 32 bits).
+	 */
+	return (unsigned int) d;
+}
+
+unsigned int duk_to_uint16(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	double d;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	d = (double) duk_js_touint16(thr, tv);
+
+	/* must relookup */
+	tv = duk_require_tval(ctx, index);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NUMBER(tv, d);  /* no need to incref */
+	DUK_TVAL_DECREF(thr, &tv_temp);
+
+	/* ToUint32() should already have restricted the result to
+	 * an acceptable range (unless 'unsigned int' is less than 32 bits).
+	 */
+	return (unsigned int) d;
+}
+
+const char *duk_to_lstring(duk_context *ctx, int index, size_t *out_len) {
+	duk_to_string(ctx, index);
+	return duk_require_lstring(ctx, index, out_len);
+}
+
+/* FIXME: other variants like uint, u32 etc */
+int duk_to_int_clamped_raw(duk_context *ctx, int index, int minval, int maxval, int *out_clamped) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_tval tv_temp;
+	double d;
+	int clamped = 0;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+	d = duk_js_tointeger(thr, tv);  /* E5 Section 9.4, ToInteger() */
+
+	if (d < (double) minval) {
+		clamped = 1;
+		d = (double) minval;
+	} else if (d > (double) maxval) {
+		clamped = 1;
+		d = (double) maxval;
+	}
+
+	/* relookup in case duk_js_tointeger() ends up e.g. coercing an object */
+	tv = duk_require_tval(ctx, index);
+	DUK_TVAL_SET_TVAL(&tv_temp, tv);
+	DUK_TVAL_SET_NUMBER(tv, d);  /* no need to incref */
+	DUK_TVAL_DECREF(thr, &tv_temp);
+
+	if (out_clamped) {
+		*out_clamped = clamped;
+	} else {
+		/* coerced value is updated to value stack even when RangeError thrown */
+		if (clamped) {
+			DUK_ERROR(thr, DUK_ERR_RANGE_ERROR, "number outside range");
+		}
+	}
+
+	return (int) d;
+}
+
+int duk_to_int_clamped(duk_context *ctx, int index, int minval, int maxval) {
+	int dummy;
+	return duk_to_int_clamped_raw(ctx, index, minval, maxval, &dummy);
+}
+
+int duk_to_int_check_range(duk_context *ctx, int index, int minval, int maxval) {
+	return duk_to_int_clamped_raw(ctx, index, minval, maxval, NULL);  /* NULL -> RangeError */
+}
+
+const char *duk_to_string(duk_context *ctx, int index) {
+	duk_tval *tv;
+
+	DUK_ASSERT(ctx != NULL);
+
+	index = duk_require_normalize_index(ctx, index);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+
+	switch (DUK_TVAL_GET_TAG(tv)) {
+	case DUK_TAG_UNDEFINED: {
+		duk_push_hstring_stridx(ctx, DUK_STRIDX_UNDEFINED);
+		break;
+	}
+	case DUK_TAG_NULL: {
+		duk_push_hstring_stridx(ctx, DUK_STRIDX_NULL);
+		break;
+	}
+	case DUK_TAG_BOOLEAN: {
+		if (DUK_TVAL_GET_BOOLEAN(tv)) {
+			duk_push_hstring_stridx(ctx, DUK_STRIDX_TRUE);
+		} else {
+			duk_push_hstring_stridx(ctx, DUK_STRIDX_FALSE);
+		}
+		break;
+	}
+	case DUK_TAG_STRING: {
+		/* nop */
+		goto skip_replace;
+	}
+	case DUK_TAG_OBJECT: {
+		duk_to_primitive(ctx, index, DUK_HINT_STRING);
+		return duk_to_string(ctx, index);  /* Note: recursive call */
+	}
+	case DUK_TAG_BUFFER: {
+		duk_hbuffer *h = DUK_TVAL_GET_BUFFER(tv);
+
+		/* Note: this currently allows creation of internal strings. */
+
+		DUK_ASSERT(h != NULL);
+		duk_push_lstring(ctx,
+		                 (const char *) DUK_HBUFFER_GET_DATA_PTR(h),
+		                 (unsigned int) DUK_HBUFFER_GET_SIZE(h));
+		break;
+	}
+	case DUK_TAG_POINTER: {
+		duk_push_sprintf(ctx, "%p", (void *) DUK_TVAL_GET_POINTER(tv));
+		break;
+	}
+	default: {
+		/* number */
+		DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
+		duk_push_tval(ctx, tv);
+		duk_numconv_stringify(ctx,
+		                      10 /*radix*/,
+		                      0 /*precision:shortest*/,
+		                      0 /*force_exponential*/);
+		break;
+	}
+	}
+
+	duk_replace(ctx, index);
+
+ skip_replace:
+	return duk_require_string(ctx, index);
+}
+
+/* internal */
+duk_hstring *duk_to_hstring(duk_context *ctx, int index) {
+	duk_hstring *ret;
+	DUK_ASSERT(ctx != NULL);
+	duk_to_string(ctx, index);
+	ret = duk_get_hstring(ctx, index);
+	DUK_ASSERT(ret != NULL);
+	return ret;
+}
+
+void *duk_to_buffer(duk_context *ctx, int index, size_t *out_size) {
+	duk_hbuffer *h_buf;
+
+	index = duk_require_normalize_index(ctx, index);
+
+	if (duk_is_buffer(ctx, index)) {
+		/* Buffer is kept as is: note that fixed/dynamic nature of
+		 * the buffer is not changed.
+		 */
+	} else {
+		/* Non-buffer value is first ToString() coerced, then converted to
+		 * a fixed size buffer.
+		 */
+		duk_hstring *h_str;
+		void *buf;
+
+		duk_to_string(ctx, index);
+		h_str = duk_get_hstring(ctx, index);
+		DUK_ASSERT(h_str != NULL);
+
+		buf = duk_push_fixed_buffer(ctx, DUK_HSTRING_GET_BYTELEN(h_str));
+		DUK_ASSERT(buf != NULL);
+		memcpy(buf, DUK_HSTRING_GET_DATA(h_str), DUK_HSTRING_GET_BYTELEN(h_str));
+		duk_replace(ctx, index);
+	}
+
+	h_buf = duk_get_hbuffer(ctx, index);
+	DUK_ASSERT(h_buf != NULL);
+
+	if (out_size) {
+		*out_size = DUK_HBUFFER_GET_SIZE(h_buf);
+	}
+	return DUK_HBUFFER_GET_DATA_PTR(h_buf);
+}
+
+void *duk_to_pointer(duk_context *ctx, int index) {
+	duk_tval *tv;
+	void *res;
+
+	DUK_ASSERT(ctx != NULL);
+
+	index = duk_require_normalize_index(ctx, index);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+
+	switch (DUK_TVAL_GET_TAG(tv)) {
+	case DUK_TAG_UNDEFINED:
+	case DUK_TAG_NULL:
+	case DUK_TAG_BOOLEAN:
+		res = NULL;
+		break;
+	case DUK_TAG_POINTER:
+		res = DUK_TVAL_GET_POINTER(tv);
+		break;
+	case DUK_TAG_STRING:
+	case DUK_TAG_OBJECT:
+	case DUK_TAG_BUFFER:
+		/* heap allocated: return heap pointer which is NOT useful
+		 * for the caller, except for debugging.
+		 */
+		res = (void *) DUK_TVAL_GET_HEAPHDR(tv);
+		break;
+	default:
+		/* number */
+		res = NULL;
+		break;
+	}
+
+	duk_push_pointer(ctx, res);
+	duk_replace(ctx, index);
+	return res;
+}
+
+void duk_to_object(duk_context *ctx, int index) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_tval *tv;
+	duk_hobject *res;
+
+	DUK_ASSERT(ctx != NULL);
+
+	index = duk_require_normalize_index(ctx, index);
+
+	tv = duk_require_tval(ctx, index);
+	DUK_ASSERT(tv != NULL);
+
+	switch (DUK_TVAL_GET_TAG(tv)) {
+	case DUK_TAG_UNDEFINED:
+	case DUK_TAG_NULL:
+	case DUK_TAG_BUFFER:
+	case DUK_TAG_POINTER: {
+		DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "attempt to coerce incompatible value to object");
+		break;
+	}
+	case DUK_TAG_BOOLEAN: {
+		int val = DUK_TVAL_GET_BOOLEAN(tv);
+
+		(void) duk_push_object_helper(ctx,
+		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_BOOLEAN),
+		                              DUK_BIDX_BOOLEAN_PROTOTYPE);
+		res = duk_require_hobject(ctx, -1);
+		DUK_ASSERT(res != NULL);
+
+		/* Note: Boolean prototype's internal value property is not writable,
+		 * but duk_def_prop_stridx() disregards the write protection.  Boolean
+		 * instances are immutable.
+		 */
+		duk_push_boolean(ctx, val);
+		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
+
+		duk_replace(ctx, index);
+		break;
+	}
+	case DUK_TAG_STRING: {
+		(void) duk_push_object_helper(ctx,
+		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_STRING),
+		                              DUK_BIDX_STRING_PROTOTYPE);
+		res = duk_require_hobject(ctx, -1);
+		DUK_ASSERT(res != NULL);
+
+		/* Note: String prototype's internal value property is not writable,
+		 * but duk_def_prop_stridx() disregards the write protection.  String
+		 * instances are immutable.
+		 */
+		duk_dup(ctx, index);
+		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
+
+		/* Enable special string behavior only after internal value has been set */
+		DUK_HOBJECT_SET_SPECIAL_STRINGOBJ(res);
+
+		duk_replace(ctx, index);
+		break;
+	}
+	case DUK_TAG_OBJECT: {
+		/* nop */
+		break;
+	}
+	default: {
+		/* number */
+		double val;
+
+		DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
+		val = DUK_TVAL_GET_NUMBER(tv);
+
+		(void) duk_push_object_helper(ctx,
+		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_NUMBER),
+		                              DUK_BIDX_NUMBER_PROTOTYPE);
+		res = duk_require_hobject(ctx, -1);
+		DUK_ASSERT(res != NULL);
+
+		/* Note: Number prototype's internal value property is not writable,
+		 * but duk_def_prop_stridx() disregards the write protection.  Number
+		 * instances are immutable.
+		 */
+		duk_push_number(ctx, val);
+		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
+
+		duk_replace(ctx, index);
+		break;
+	}
+	}
+}
+
 /*
  *  Type checking
  */
@@ -1473,7 +2122,7 @@ int duk_is_callable(duk_context *ctx, int index) {
 	                                   DUK_HOBJECT_FLAG_BOUND);
 }
 
-int duk_is_growable(duk_context *ctx, int index) {
+int duk_is_dynamic(duk_context *ctx, int index) {
 	duk_tval *tv;
 
 	DUK_ASSERT(ctx != NULL);
@@ -1482,7 +2131,21 @@ int duk_is_growable(duk_context *ctx, int index) {
 	if (DUK_TVAL_IS_BUFFER(tv)) {
 		duk_hbuffer *h = DUK_TVAL_GET_BUFFER(tv);
 		DUK_ASSERT(h != NULL);
-		return (DUK_HBUFFER_HAS_GROWABLE(h) ? 1 : 0);
+		return (DUK_HBUFFER_HAS_DYNAMIC(h) ? 1 : 0);
+	}
+	return 0;
+}
+
+int duk_is_fixed(duk_context *ctx, int index) {
+	duk_tval *tv;
+
+	DUK_ASSERT(ctx != NULL);
+
+	tv = duk_get_tval(ctx, index);
+	if (DUK_TVAL_IS_BUFFER(tv)) {
+		duk_hbuffer *h = DUK_TVAL_GET_BUFFER(tv);
+		DUK_ASSERT(h != NULL);
+		return (DUK_HBUFFER_HAS_DYNAMIC(h) ? 0 : 1);
 	}
 	return 0;
 }
@@ -1586,11 +2249,19 @@ const char *duk_push_lstring(duk_context *ctx, const char *str, size_t len) {
 	duk_tval *tv_slot;
 
 	DUK_ASSERT(ctx != NULL);
-	DUK_ASSERT(str != NULL || len == 0);  /* if len == 0, str may be NULL */
 
 	/* check stack before interning (avoid hanging temp) */
 	if (thr->valstack_top >= thr->valstack_end) {
 		DUK_ERROR(thr, DUK_ERR_API_ERROR, "attempt to push beyond currently allocated stack");
+	}
+
+	/* NULL with zero length represents an empty string; NULL with higher
+	 * length is also now trated like an empty string although it is
+	 * a bit dubious.  This is unlike duk_push_string() which pushes a
+	 * 'null' if the input string is a NULL.
+	 */
+	if (!str) {
+		len = 0;
 	}
 
 	h = duk_heap_string_intern_checked(thr, (duk_u8 *) str, (duk_u32) len);
@@ -1606,9 +2277,58 @@ const char *duk_push_lstring(duk_context *ctx, const char *str, size_t len) {
 
 const char *duk_push_string(duk_context *ctx, const char *str) {
 	DUK_ASSERT(ctx != NULL);
-	DUK_ASSERT(str != NULL);
 
-	return duk_push_lstring(ctx, str, (unsigned int) strlen(str));
+	if (str) {
+		return duk_push_lstring(ctx, str, (unsigned int) strlen(str));
+	} else {
+		duk_push_null(ctx);
+		return NULL;
+	}
+}
+
+/* This is a bit clunky because it is ANSI C portable.  Should perhaps
+ * relocate to another file because this is potentially platform
+ * dependent.
+ */
+const char *duk_push_string_file(duk_context *ctx, const char *path) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	FILE *f = NULL;
+	char *buf;
+	long sz;
+
+	DUK_ASSERT(ctx != NULL);
+	if (!path) {
+		goto fail;
+	}
+	f = fopen(path, "rb");
+	if (!f) {
+		goto fail;
+	}
+	if (fseek(f, 0, SEEK_END) < 0) {
+		goto fail;
+	}
+	sz = ftell(f);
+	if (sz < 0) {
+		goto fail;
+	}
+	if (fseek(f, 0, SEEK_SET) < 0) {
+		goto fail;
+	}
+	buf = duk_push_fixed_buffer(ctx, sz);
+	DUK_ASSERT(buf != NULL);
+	if (fread(buf, 1, sz, f) != sz) {
+		goto fail;
+	}
+	(void) fclose(f);  /* ignore fclose() error */
+	f = NULL;
+	return duk_to_string(ctx, -1);
+
+ fail:
+	if (f) {
+		fclose(f);
+	}
+	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "failed to read file");
+	return NULL;
 }
 
 void duk_push_pointer(duk_context *ctx, void *val) {
@@ -1806,15 +2526,23 @@ const char *duk_push_vsprintf(duk_context *ctx, const char *fmt, va_list ap) {
 	const char *res;
 
 	DUK_ASSERT(ctx != NULL);
-	DUK_ASSERT(fmt != NULL);
+
+	/* special handling of fmt==NULL */
+	if (!fmt) {
+		duk_hstring *h_str;
+		duk_push_hstring_stridx(ctx, DUK_STRIDX_EMPTY_STRING);
+		h_str = DUK_HTHREAD_STRING_EMPTY_STRING(thr);  /* rely on interning, must be this string */
+		return (const char *) DUK_HSTRING_GET_DATA(h_str);
+	}
 
 	/* initial estimate based on format string */
 	sz = strlen(fmt) + 10;  /* XXX: plus something to avoid just missing */
 	if (sz < DUK_PUSH_SPRINTF_INITIAL_SIZE) {
 		sz = DUK_PUSH_SPRINTF_INITIAL_SIZE;
 	}
+	DUK_ASSERT(sz > 0);
 
-	buf = duk_push_new_growable_buffer(ctx, sz);
+	buf = duk_push_dynamic_buffer(ctx, sz);
 
 	for(;;) {
 		len = try_push_vsprintf(ctx, buf, sz, fmt, ap);
@@ -1842,6 +2570,7 @@ const char *duk_push_sprintf(duk_context *ctx, const char *fmt, ...) {
 	va_list ap;
 	const char *retval;
 
+	/* allow fmt==NULL */
 	va_start(ap, fmt);
 	retval = duk_push_vsprintf(ctx, fmt, ap);
 	va_end(ap);
@@ -1850,7 +2579,7 @@ const char *duk_push_sprintf(duk_context *ctx, const char *fmt, ...) {
 }
 
 /* internal */
-int duk_push_new_object_helper(duk_context *ctx, int hobject_flags_and_class, int prototype_bidx) {
+int duk_push_object_helper(duk_context *ctx, int hobject_flags_and_class, int prototype_bidx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_tval *tv_slot;
 	duk_hobject *h;
@@ -1890,23 +2619,23 @@ int duk_push_new_object_helper(duk_context *ctx, int hobject_flags_and_class, in
 	return ret;
 }
 
-int duk_push_new_object(duk_context *ctx) {
-	return duk_push_new_object_helper(ctx,
-	                                  DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                                  DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJECT),
-	                                  DUK_BIDX_OBJECT_PROTOTYPE);
+int duk_push_object(duk_context *ctx) {
+	return duk_push_object_helper(ctx,
+	                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJECT),
+	                              DUK_BIDX_OBJECT_PROTOTYPE);
 }
 
-int duk_push_new_array(duk_context *ctx) {
+int duk_push_array(duk_context *ctx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_hobject *obj;
 	int ret;
 
-	ret = duk_push_new_object_helper(ctx,
-	                                 DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                                 DUK_HOBJECT_FLAG_ARRAY_PART |
-	                                 DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_ARRAY),
-	                                 DUK_BIDX_ARRAY_PROTOTYPE);
+	ret = duk_push_object_helper(ctx,
+	                             DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                             DUK_HOBJECT_FLAG_ARRAY_PART |
+	                             DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_ARRAY),
+	                             DUK_BIDX_ARRAY_PROTOTYPE);
 
 	obj = duk_require_hobject(ctx, ret);
 
@@ -1926,7 +2655,7 @@ int duk_push_new_array(duk_context *ctx) {
 	return ret;
 }
 
-int duk_push_new_thread(duk_context *ctx) {
+int duk_push_thread(duk_context *ctx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_hthread *obj;
 	int ret;
@@ -1974,7 +2703,7 @@ int duk_push_new_thread(duk_context *ctx) {
 	return ret;
 }
 
-int duk_push_new_compiledfunction(duk_context *ctx) {
+int duk_push_compiledfunction(duk_context *ctx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_hcompiledfunction *obj;
 	int ret;
@@ -2014,7 +2743,7 @@ int duk_push_new_compiledfunction(duk_context *ctx) {
 	return ret;
 }
 
-int duk_push_new_c_function(duk_context *ctx, duk_c_function func, int nargs) {
+int duk_push_c_function(duk_context *ctx, duk_c_function func, int nargs) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_hnativefunction *obj;
 	int ret;
@@ -2046,8 +2775,10 @@ int duk_push_new_c_function(duk_context *ctx, duk_c_function func, int nargs) {
 	 */
 
 	obj = duk_hnativefunction_alloc(thr->heap, DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                                           DUK_HOBJECT_FLAG_CONSTRUCTABLE |
 	                                           DUK_HOBJECT_FLAG_NATIVEFUNCTION |
 	                                           DUK_HOBJECT_FLAG_NEWENV |
+	                                           DUK_HOBJECT_FLAG_STRICT |
 	                                           DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_FUNCTION));
 	if (!obj) {
 		DUK_ERROR(thr, DUK_ERR_ALLOC_ERROR, "failed to allocate a function object");
@@ -2074,7 +2805,7 @@ int duk_push_new_c_function(duk_context *ctx, duk_c_function func, int nargs) {
 	return 0;  /* not reached */
 }
 
-int duk_push_new_error_object(duk_context *ctx, int err_code, const char *fmt, ...) {
+int duk_push_error_object(duk_context *ctx, int err_code, const char *fmt, ...) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	int retval;
 	va_list ap;
@@ -2086,10 +2817,10 @@ int duk_push_new_error_object(duk_context *ctx, int err_code, const char *fmt, .
 
 	va_start(ap, fmt);
 
-	retval = duk_push_new_object_helper(ctx,
-	                                    DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                                    DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_ERROR),
-	                                    DUK_BIDX_ERROR_PROTOTYPE);  /* prototype updated below */
+	retval = duk_push_object_helper(ctx,
+	                                DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                                DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_ERROR),
+	                                DUK_BIDX_ERROR_PROTOTYPE);  /* prototype updated below */
 
 	errobj = duk_require_hobject(ctx, -1);
 
@@ -2121,8 +2852,8 @@ int duk_push_new_error_object(duk_context *ctx, int err_code, const char *fmt, .
 	return retval;
 }
 
-/* FIXME: repetition, see duk_push_new_object */
-void *duk_push_new_buffer(duk_context *ctx, size_t size, int growable) {
+/* FIXME: repetition, see duk_push_object */
+void *duk_push_buffer(duk_context *ctx, size_t size, int dynamic) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_tval *tv_slot;
 	duk_hbuffer *h;
@@ -2134,7 +2865,7 @@ void *duk_push_new_buffer(duk_context *ctx, size_t size, int growable) {
 		DUK_ERROR(thr, DUK_ERR_API_ERROR, "attempt to push beyond currently allocated stack");
 	}
 
-	h = duk_hbuffer_alloc(thr->heap, size, growable);
+	h = duk_hbuffer_alloc(thr->heap, size, dynamic);
 	if (!h) {
 		DUK_ERROR(thr, DUK_ERR_ALLOC_ERROR, "failed to allocate buffer");
 	}
@@ -2147,19 +2878,19 @@ void *duk_push_new_buffer(duk_context *ctx, size_t size, int growable) {
 	return DUK_HBUFFER_GET_DATA_PTR(h);
 }
 
-void *duk_push_new_fixed_buffer(duk_context *ctx, size_t size) {
-	return duk_push_new_buffer(ctx, size, 0);
+void *duk_push_fixed_buffer(duk_context *ctx, size_t size) {
+	return duk_push_buffer(ctx, size, 0);
 }
 
-void *duk_push_new_growable_buffer(duk_context *ctx, size_t size) {
-	return duk_push_new_buffer(ctx, size, 1);
+void *duk_push_dynamic_buffer(duk_context *ctx, size_t size) {
+	return duk_push_buffer(ctx, size, 1);
 }
 
-int duk_push_new_object_internal(duk_context *ctx) {
-	return duk_push_new_object_helper(ctx,
-	                                  DUK_HOBJECT_FLAG_EXTENSIBLE |
-	                                  DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJECT),
-	                                  -1);  /* no prototype */
+int duk_push_object_internal(duk_context *ctx) {
+	return duk_push_object_helper(ctx,
+	                              DUK_HOBJECT_FLAG_EXTENSIBLE |
+	                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJECT),
+	                              -1);  /* no prototype */
 }
 
 /* internal */
@@ -2321,13 +3052,13 @@ void duk_fatal(duk_context *ctx, int err_code) {
 }
 
 void duk_error(duk_context *ctx, int err_code, const char *fmt, ...) {
-	/* FIXME: push_new_error_object_vsprintf? */
+	/* FIXME: push_error_object_vsprintf? */
 	va_list ap;
 
 	va_start(ap, fmt);
 	duk_push_vsprintf(ctx, fmt, ap);
 	va_end(ap);
-	duk_push_new_error_object(ctx, err_code, "%s", duk_get_string(ctx, -1));
+	duk_push_error_object(ctx, err_code, "%s", duk_get_string(ctx, -1));
 	duk_throw(ctx);
 }
 
@@ -2367,4 +3098,66 @@ int duk_strict_equals(duk_context *ctx, int index1, int index2) {
 	return duk_js_strict_equals(tv1, tv2);
 }
 
+/*
+ *  Heap creation
+ */
+
+duk_context *duk_create_heap(duk_alloc_function alloc_func,
+                             duk_realloc_function realloc_func,
+                             duk_free_function free_func,
+                             void *alloc_udata,
+                             duk_fatal_function fatal_handler) {
+	duk_heap *heap = NULL;
+	duk_context *ctx;
+
+	/* Assume that either all memory funcs are NULL or non-NULL, mixed
+	 * cases will now be unsafe.
+	 */
+
+	/* FIXME: just assert non-NULL values here and make caller arguments
+	 * do the defaulting to the default implementations (smaller code)?
+	 */
+
+	if (!alloc_func) {
+		DUK_ASSERT(realloc_func == NULL);
+		DUK_ASSERT(free_func == NULL);
+		alloc_func = duk_default_alloc_function;
+		realloc_func = duk_default_realloc_function;
+		free_func = duk_default_free_function;
+	} else {
+		DUK_ASSERT(realloc_func != NULL);
+		DUK_ASSERT(free_func != NULL);
+	}
+
+	if (!fatal_handler) {
+		fatal_handler = duk_default_fatal_handler;
+	}
+
+	DUK_ASSERT(alloc_func != NULL);
+	DUK_ASSERT(realloc_func != NULL);
+	DUK_ASSERT(free_func != NULL);
+	DUK_ASSERT(fatal_handler != NULL);
+
+	heap = duk_heap_alloc(alloc_func, realloc_func, free_func, alloc_udata, fatal_handler);
+	if (!heap) {
+		return NULL;
+	}
+	ctx = (duk_context *) heap->heap_thread;
+	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(((duk_hthread *) ctx)->heap != NULL);
+	return ctx;
+}
+
+void duk_destroy_heap(duk_context *ctx) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_heap *heap;
+
+	if (!ctx) {
+		return;
+	}
+	heap = thr->heap;
+	DUK_ASSERT(heap != NULL);
+
+	duk_heap_free(heap);
+}
 
