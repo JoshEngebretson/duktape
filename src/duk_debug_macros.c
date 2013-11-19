@@ -85,7 +85,7 @@ void duk_debug_log(int level, const char *file, int line, const char *func, char
 
 	va_start(ap, fmt);
 
-	memset((void *) buf, 0, (size_t) DUK_DEBUG_BUFSIZE);
+	DUK_MEMSET((void *) buf, 0, (size_t) DUK_DEBUG_BUFSIZE);
 	duk_debug_vsnprintf(buf, DUK_DEBUG_BUFSIZE - 1, fmt, ap);
 
 #ifdef DUK_USE_DPRINT_RDTSC
@@ -124,10 +124,11 @@ int duk_debug_level_stash;
 
 void duk_debug_log(char *fmt, ...) {
 	va_list ap;
+	int level = duk_debug_level_stash;
 
 	va_start(ap, fmt);
 
-	memset((void *) buf, 0, (size_t) DUK_DEBUG_BUFSIZE);
+	DUK_MEMSET((void *) buf, 0, (size_t) DUK_DEBUG_BUFSIZE);
 	duk_debug_vsnprintf(buf, DUK_DEBUG_BUFSIZE - 1, fmt, ap);
 
 #ifdef DUK_USE_DPRINT_RDTSC

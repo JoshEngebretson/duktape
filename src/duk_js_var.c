@@ -113,10 +113,10 @@ void duk_js_push_closure(duk_hthread *thr,
 	duk_hcompiledfunction *fun_clos;
 	duk_u16 proplist[] = { DUK_STRIDX_INT_VARMAP,
 	                       DUK_STRIDX_INT_FORMALS,
-	                       DUK_STRIDX_INT_SOURCE,
 	                       DUK_STRIDX_NAME,
 	                       DUK_STRIDX_INT_PC2LINE,
-	                       DUK_STRIDX_INT_FILENAME };  /* order: most frequent to least frequent */
+	                       DUK_STRIDX_FILE_NAME,
+	                       DUK_STRIDX_INT_SOURCE };  /* order: most frequent to least frequent */
 	int i;
 	duk_u32 len_value;
 
@@ -380,6 +380,8 @@ void duk_js_push_closure(duk_hthread *thr,
 	 *  For Rhino and smjs it is non-writable, non-enumerable, and non-configurable;
 	 *  for V8 it is writable, non-enumerable, non-configurable.  It is also defined
 	 *  for an anonymous function expression in which case the value is an empty string.
+	 *  We could also leave name 'undefined' for anonymous functions but that would
+	 *  differ from behavior of other engines, so use an empty string.
 	 *
 	 *  FIXME: make optional?  costs something per function.
 	 */
@@ -444,7 +446,7 @@ duk_hobject *duk_create_activation_environment_record(duk_hthread *thr,
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(func != NULL);
 
-	tv = duk_hobject_find_existing_entry_tval_ptr(func, DUK_HEAP_STRING_INT_LEXENV(thr));
+	tv = duk_hobject_find_existing_entry_tval_ptr(func, DUK_HTHREAD_STRING_INT_LEXENV(thr));
 	if (tv) {
 		DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
 		DUK_ASSERT(DUK_HOBJECT_IS_ENV(DUK_TVAL_GET_OBJECT(tv)));
@@ -708,12 +710,12 @@ static int get_identifier_open_decl_env_regs(duk_hthread *thr,
 
 	DUK_ASSERT(DUK_HOBJECT_IS_DECENV(env));
 
-	tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_CALLEE(thr));
+	tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_CALLEE(thr));
 	if (!tv) {
 		/* env is closed, should be missing _callee, _thread, _regbase */
-		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_CALLEE(thr)) == NULL);
-		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_THREAD(thr)) == NULL);
-		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_REGBASE(thr)) == NULL);
+		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_CALLEE(thr)) == NULL);
+		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_THREAD(thr)) == NULL);
+		DUK_ASSERT(duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_REGBASE(thr)) == NULL);
 		return 0;
 	}
 
@@ -739,7 +741,7 @@ static int get_identifier_open_decl_env_regs(duk_hthread *thr,
 	reg_rel = DUK_TVAL_GET_NUMBER(tv);
 	DUK_ASSERT(reg_rel >= 0 && reg_rel < ((duk_hcompiledfunction *) env_func)->nregs);
 
-	tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_THREAD(thr));
+	tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_THREAD(thr));
 	DUK_ASSERT(tv != NULL);
 	DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
 	DUK_ASSERT(DUK_TVAL_GET_OBJECT(tv) != NULL);
@@ -751,7 +753,7 @@ static int get_identifier_open_decl_env_regs(duk_hthread *thr,
 	 * with what thread is used for valstack lookup.
 	 */
 
-	tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_REGBASE(thr));
+	tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_REGBASE(thr));
 	DUK_ASSERT(tv != NULL);
 	DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
 	env_regbase = DUK_TVAL_GET_NUMBER(tv);
@@ -999,7 +1001,7 @@ static int get_identifier_reference(duk_hthread *thr,
 
 			DUK_ASSERT(cl == DUK_HOBJECT_CLASS_OBJENV);
 
-			tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_TARGET(thr));
+			tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_TARGET(thr));
 			DUK_ASSERT(tv != NULL);
 			DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
 			target = DUK_TVAL_GET_OBJECT(tv);
@@ -1016,7 +1018,7 @@ static int get_identifier_reference(duk_hthread *thr,
 			if (duk_hobject_hasprop_raw(thr, target, name)) {
 				out->value = NULL;  /* can't get value, may be accessor */
 
-				tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_THIS(thr));
+				tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_THIS(thr));
 				out->this_binding = tv;  /* may be NULL */
 
 				out->env = env;
@@ -1122,7 +1124,7 @@ static int getvar_helper(duk_hthread *thr,
                          duk_hobject *env,
                          duk_activation *act,
                          duk_hstring *name,
-                         int throw) {
+                         int throw_flag) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_id_lookup_result ref;
 	duk_tval tv_tmp_obj;
@@ -1171,7 +1173,7 @@ static int getvar_helper(duk_hthread *thr,
 
 		return 1;
 	} else {
-		if (throw) {
+		if (throw_flag) {
 			DUK_ERROR(thr, DUK_ERR_REFERENCE_ERROR,
 			          "identifier '%s' undefined",
 			          (char *) DUK_HSTRING_GET_DATA(name));
@@ -1184,16 +1186,16 @@ static int getvar_helper(duk_hthread *thr,
 int duk_js_getvar_envrec(duk_hthread *thr,
                          duk_hobject *env,
                          duk_hstring *name,
-                         int throw) {
-	return getvar_helper(thr, env, NULL, name, throw);
+                         int throw_flag) {
+	return getvar_helper(thr, env, NULL, name, throw_flag);
 }
 
 int duk_js_getvar_activation(duk_hthread *thr,
                              duk_activation *act,
                              duk_hstring *name,
-                             int throw) {
+                             int throw_flag) {
 	DUK_ASSERT(act != NULL);
-	return getvar_helper(thr, act->lex_env, act, name, throw);
+	return getvar_helper(thr, act->lex_env, act, name, throw_flag);
 }
 
 /*
@@ -1640,7 +1642,7 @@ static int declvar_helper(duk_hthread *thr,
 	} else {
 		DUK_ASSERT(DUK_HOBJECT_IS_OBJENV(env));
 
-		tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HEAP_STRING_INT_TARGET(thr));
+		tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_TARGET(thr));
 		DUK_ASSERT(tv != NULL);
 		DUK_ASSERT(DUK_TVAL_IS_OBJECT(tv));
 		holder = DUK_TVAL_GET_OBJECT(tv);

@@ -10,6 +10,15 @@
 #include "duk_internal.h"
 
 /*
+ *  Global state for working around missing variadic macros
+ */
+
+#ifndef DUK_USE_VARIADIC_MACROS
+const char *duk_api_global_filename = NULL;
+int duk_api_global_line = 0;
+#endif
+
+/*
  *  Helpers
  */
 
@@ -27,7 +36,7 @@ static int api_coerce_d2i(double d) {
 	 *  on platforms with a 64-bit int type, the full range is allowed.
 	 */
 
-	if (fpclassify(d) == FP_NAN) {
+	if (DUK_FPCLASSIFY(d) == DUK_FP_NAN) {
 		return 0;
 	} else if (d < INT_MIN) {
 		/* covers -Infinity */
@@ -272,7 +281,7 @@ static int resize_valstack(duk_context *ctx, size_t new_size) {
 	 */
 
 	new_alloc_size = sizeof(duk_tval) * new_size;
-	new_valstack = DUK_REALLOC_INDIRECT(thr->heap, (void **) &thr->valstack, new_alloc_size);
+	new_valstack = (duk_tval *) DUK_REALLOC_INDIRECT(thr->heap, (void **) &thr->valstack, new_alloc_size);
 	if (!new_valstack) {
 		DUK_DPRINT("failed to resize valstack to %d entries (%d bytes)",
 		           new_size, new_alloc_size);
@@ -436,7 +445,7 @@ static int check_valstack_resize_helper(duk_context *ctx,
 		DUK_DDPRINT("valstack resize failed");
 
 		if (throw_flag) {
-			DUK_ERROR(ctx, DUK_ERR_ALLOC_ERROR, "failed to extend valstack");
+			DUK_ERROR(thr, DUK_ERR_ALLOC_ERROR, "failed to extend valstack");
 		} else {
 			return 0;
 		}
@@ -590,7 +599,7 @@ void duk_insert(duk_context *ctx, int to_index) {
 	DUK_DDDPRINT("duk_insert: to_index=%p, p=%p, q=%p, nbytes=%d", to_index, p, q, nbytes);
 	if (nbytes > 0) {
 		DUK_TVAL_SET_TVAL(&tv, q);
-		memmove((void *) (p + 1), (void *) p, nbytes);
+		DUK_MEMMOVE((void *) (p + 1), (void *) p, nbytes);
 		DUK_TVAL_SET_TVAL(p, &tv);
 	} else {
 		/* nop: insert top to top */
@@ -654,7 +663,7 @@ void duk_remove(duk_context *ctx, int index) {
 
 	nbytes = (size_t) (((duk_u8 *) q) - ((duk_u8 *) p));  /* Note: 'q' is top-1 */
 	if (nbytes > 0) {
-		memmove(p, p + 1, nbytes);
+		DUK_MEMMOVE(p, p + 1, nbytes);
 	}
 	DUK_TVAL_SET_UNDEFINED_UNUSED(q);
 	thr->valstack_top--;
@@ -687,7 +696,7 @@ void duk_xmove(duk_context *ctx, duk_context *from_ctx, unsigned int count) {
 	}
 
 	/* copy values (no overlap even if ctx == from_ctx) */
-	memcpy((void *) thr->valstack_top, src, nbytes);
+	DUK_MEMCPY((void *) thr->valstack_top, src, nbytes);
 
 	/* incref them */
 	p = thr->valstack_top;
@@ -823,7 +832,7 @@ int duk_require_boolean(duk_context *ctx, int index) {
 }
 
 double duk_get_number(duk_context *ctx, int index) {
-	double ret = NAN;  /* default: NaN */
+	double ret = DUK_DOUBLE_NAN;  /* default: NaN */
 	duk_tval *tv;
 
 	DUK_ASSERT(ctx != NULL);
@@ -835,13 +844,14 @@ double duk_get_number(duk_context *ctx, int index) {
 	}
 
 	/*
-	 *  Number should already be in NAN-normalized form,
+	 *  Number should already be in NaN-normalized form,
 	 *  but let's normalize anyway.
 	 *
-	 *  XXX: NAN normalization for external API might be
+	 *  XXX: NaN normalization for external API might be
 	 *  different from internal normalization?
 	 */
 
+	/* FIXME: breaks strict aliasing rules */
 	DUK_DOUBLE_NORMALIZE_NAN_CHECK(&ret);
 
 	return ret;
@@ -858,10 +868,10 @@ double duk_require_number(duk_context *ctx, int index) {
 		double ret = DUK_TVAL_GET_NUMBER(tv);
 
 		/*
-		 *  Number should already be in NAN-normalized form,
+		 *  Number should already be in NaN-normalized form,
 		 *  but let's normalize anyway.
 		 *
-		 *  XXX: NAN normalization for external API might be
+		 *  XXX: NaN normalization for external API might be
 		 *  different from internal normalization?
 		 */
 		DUK_DOUBLE_NORMALIZE_NAN_CHECK(&ret);
@@ -869,7 +879,7 @@ double duk_require_number(duk_context *ctx, int index) {
 	}
 
 	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "not number");
-	return NAN;  /* not reachable */
+	return DUK_DOUBLE_NAN;  /* not reachable */
 }
 
 int duk_get_int(duk_context *ctx, int index) {
@@ -1081,9 +1091,9 @@ duk_hobject *duk_get_hobject(duk_context *ctx, int index) {
 }
 
 /* internal */
-duk_hobject *duk_get_hobject_with_class(duk_context *ctx, int index, int class) {
+duk_hobject *duk_get_hobject_with_class(duk_context *ctx, int index, int classnum) {
 	duk_hobject *h = (duk_hobject *) get_tagged_heaphdr(ctx, index, DUK_TAG_OBJECT, 1);
-	if (h != NULL && DUK_HOBJECT_GET_CLASS_NUMBER(h) != class) {
+	if (h != NULL && DUK_HOBJECT_GET_CLASS_NUMBER(h) != classnum) {
 		h = NULL;
 	}
 	return h;
@@ -1095,12 +1105,12 @@ duk_hobject *duk_require_hobject(duk_context *ctx, int index) {
 }
 
 /* internal */
-duk_hobject *duk_require_hobject_with_class(duk_context *ctx, int index, int class) {
+duk_hobject *duk_require_hobject_with_class(duk_context *ctx, int index, int classnum) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_hobject *h = (duk_hobject *) get_tagged_heaphdr(ctx, index, DUK_TAG_OBJECT, 0);
 	DUK_ASSERT(h != NULL);
-	if (DUK_HOBJECT_GET_CLASS_NUMBER(h) != class) {
-		DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "expected object with class number %d", class);
+	if (DUK_HOBJECT_GET_CLASS_NUMBER(h) != classnum) {
+		DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "expected object with class number %d", classnum);
 	}
 	return h;
 }
@@ -1765,7 +1775,7 @@ void *duk_to_buffer(duk_context *ctx, int index, size_t *out_size) {
 
 		buf = duk_push_fixed_buffer(ctx, DUK_HSTRING_GET_BYTELEN(h_str));
 		DUK_ASSERT(buf != NULL);
-		memcpy(buf, DUK_HSTRING_GET_DATA(h_str), DUK_HSTRING_GET_BYTELEN(h_str));
+		DUK_MEMCPY(buf, DUK_HSTRING_GET_DATA(h_str), DUK_HSTRING_GET_BYTELEN(h_str));
 		duk_replace(ctx, index);
 	}
 
@@ -1821,6 +1831,11 @@ void duk_to_object(duk_context *ctx, int index) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_tval *tv;
 	duk_hobject *res;
+	int shared_flags = 0;   /* shared flags for a subset of types */
+	int shared_proto = 0;
+	int shared_string = 0;
+
+	/* FIXME: rework shared_XXX to fit into one reg? */
 
 	DUK_ASSERT(ctx != NULL);
 
@@ -1831,82 +1846,67 @@ void duk_to_object(duk_context *ctx, int index) {
 
 	switch (DUK_TVAL_GET_TAG(tv)) {
 	case DUK_TAG_UNDEFINED:
-	case DUK_TAG_NULL:
-	case DUK_TAG_BUFFER:
-	case DUK_TAG_POINTER: {
+	case DUK_TAG_NULL: {
 		DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "attempt to coerce incompatible value to object");
 		break;
 	}
 	case DUK_TAG_BOOLEAN: {
-		int val = DUK_TVAL_GET_BOOLEAN(tv);
-
-		(void) duk_push_object_helper(ctx,
-		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
-		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_BOOLEAN),
-		                              DUK_BIDX_BOOLEAN_PROTOTYPE);
-		res = duk_require_hobject(ctx, -1);
-		DUK_ASSERT(res != NULL);
-
-		/* Note: Boolean prototype's internal value property is not writable,
-		 * but duk_def_prop_stridx() disregards the write protection.  Boolean
-		 * instances are immutable.
-		 */
-		duk_push_boolean(ctx, val);
-		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
-
-		duk_replace(ctx, index);
-		break;
+		shared_flags = DUK_HOBJECT_FLAG_EXTENSIBLE |
+		               DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_BOOLEAN);
+		shared_proto = DUK_BIDX_BOOLEAN_PROTOTYPE;
+		goto create_object;
 	}
 	case DUK_TAG_STRING: {
-		(void) duk_push_object_helper(ctx,
-		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
-		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_STRING),
-		                              DUK_BIDX_STRING_PROTOTYPE);
-		res = duk_require_hobject(ctx, -1);
-		DUK_ASSERT(res != NULL);
-
-		/* Note: String prototype's internal value property is not writable,
-		 * but duk_def_prop_stridx() disregards the write protection.  String
-		 * instances are immutable.
-		 */
-		duk_dup(ctx, index);
-		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
-
-		/* Enable special string behavior only after internal value has been set */
-		DUK_HOBJECT_SET_SPECIAL_STRINGOBJ(res);
-
-		duk_replace(ctx, index);
-		break;
+		shared_flags = DUK_HOBJECT_FLAG_EXTENSIBLE |
+		               DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_STRING);
+		shared_proto = DUK_BIDX_STRING_PROTOTYPE;
+		shared_string = 1;
+		goto create_object;
 	}
 	case DUK_TAG_OBJECT: {
 		/* nop */
 		break;
 	}
+	case DUK_TAG_BUFFER: {
+		shared_flags = DUK_HOBJECT_FLAG_EXTENSIBLE |
+		               DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_BUFFER);
+		shared_proto = DUK_BIDX_BUFFER_PROTOTYPE;
+		goto create_object;
+	}
+	case DUK_TAG_POINTER: {
+		shared_flags = DUK_HOBJECT_FLAG_EXTENSIBLE |
+		               DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_POINTER);
+		shared_proto = DUK_BIDX_POINTER_PROTOTYPE;
+		goto create_object;
+	}
 	default: {
-		/* number */
-		double val;
-
-		DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
-		val = DUK_TVAL_GET_NUMBER(tv);
-
-		(void) duk_push_object_helper(ctx,
-		                              DUK_HOBJECT_FLAG_EXTENSIBLE |
-		                              DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_NUMBER),
-		                              DUK_BIDX_NUMBER_PROTOTYPE);
-		res = duk_require_hobject(ctx, -1);
-		DUK_ASSERT(res != NULL);
-
-		/* Note: Number prototype's internal value property is not writable,
-		 * but duk_def_prop_stridx() disregards the write protection.  Number
-		 * instances are immutable.
-		 */
-		duk_push_number(ctx, val);
-		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
-
-		duk_replace(ctx, index);
-		break;
+		shared_flags = DUK_HOBJECT_FLAG_EXTENSIBLE |
+		               DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_NUMBER);
+		shared_proto = DUK_BIDX_NUMBER_PROTOTYPE;
+		goto create_object;
 	}
 	}
+	return;
+
+ create_object:
+	(void) duk_push_object_helper(ctx, shared_flags, shared_proto);
+	res = duk_require_hobject(ctx, -1);
+	DUK_ASSERT(res != NULL);
+
+	/* Note: Boolean prototype's internal value property is not writable,
+	 * but duk_def_prop_stridx() disregards the write protection.  Boolean
+	 * instances are immutable.
+	 */
+	duk_dup(ctx, index);
+	duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_VALUE, DUK_PROPDESC_FLAGS_NONE);
+
+	/* FIXME: fix this check to lookup class from shared_flags to minimize size */
+	if (shared_string) {
+		/* Enable special string behavior only after internal value has been set */
+		DUK_HOBJECT_SET_SPECIAL_STRINGOBJ(res);
+	}
+
+	duk_replace(ctx, index);
 }
 
 /*
@@ -1965,6 +1965,10 @@ int duk_get_type(duk_context *ctx, int index) {
 	DUK_NEVER_HERE();
 }
 
+int duk_check_type(duk_context *ctx, int index, int type) {
+	return (duk_get_type(ctx, index) == type) ? 1 : 0;
+}
+
 int duk_get_type_mask(duk_context *ctx, int index) {
 	duk_tval *tv;
 
@@ -1993,6 +1997,10 @@ int duk_get_type_mask(duk_context *ctx, int index) {
 		return DUK_TYPE_MASK_NUMBER;
 	}
 	DUK_NEVER_HERE();
+}
+
+int duk_check_type_mask(duk_context *ctx, int index, int mask) {
+	return (duk_get_type_mask(ctx, index) & mask) ? 1 : 0;
 }
 
 int duk_is_undefined(duk_context *ctx, int index) {
@@ -2046,7 +2054,7 @@ int duk_is_nan(duk_context *ctx, int index) {
 	 * coerce to NaN.  In particular, duk_get_number() returns a NaN for
 	 * non-numbers, so should this also return true for non-numbers?
 	 */
-	return duk_is_number(ctx, index) && isnan(duk_get_number(ctx, index));
+	return duk_is_number(ctx, index) && DUK_ISNAN(duk_get_number(ctx, index));
 }
 
 int duk_is_string(duk_context *ctx, int index) {
@@ -2155,13 +2163,12 @@ int duk_is_primitive(duk_context *ctx, int index) {
 }
 
 int duk_is_object_coercible(duk_context *ctx, int index) {
-	int mask = DUK_TYPE_MASK_BOOLEAN |
-	           DUK_TYPE_MASK_NUMBER |
-	           DUK_TYPE_MASK_STRING |
-	           DUK_TYPE_MASK_OBJECT;
-	/* FIXME: what about buffer and pointer? */
-
-	return (duk_get_type_mask(ctx, index) & mask ? 1 : 0);
+	return duk_check_type_mask(ctx, index, DUK_TYPE_MASK_BOOLEAN |
+	                                       DUK_TYPE_MASK_NUMBER |
+	                                       DUK_TYPE_MASK_STRING |
+	                                       DUK_TYPE_MASK_OBJECT |
+	                                       DUK_TYPE_MASK_BUFFER |
+	                                       DUK_TYPE_MASK_POINTER);
 }
 
 /*
@@ -2240,7 +2247,7 @@ void duk_push_int(duk_context *ctx, int val) {
 }
 
 void duk_push_nan(duk_context *ctx) {
-	duk_push_number(ctx, NAN);
+	duk_push_number(ctx, DUK_DOUBLE_NAN);
 }
 
 const char *duk_push_lstring(duk_context *ctx, const char *str, size_t len) {
@@ -2314,7 +2321,7 @@ const char *duk_push_string_file(duk_context *ctx, const char *path) {
 	if (fseek(f, 0, SEEK_SET) < 0) {
 		goto fail;
 	}
-	buf = duk_push_fixed_buffer(ctx, sz);
+	buf = (char *) duk_push_fixed_buffer(ctx, sz);
 	DUK_ASSERT(buf != NULL);
 	if (fread(buf, 1, sz, f) != sz) {
 		goto fail;
@@ -2511,7 +2518,7 @@ void duk_push_global_object(duk_context *ctx) {
 static int try_push_vsprintf(duk_context *ctx, void *buf, size_t sz, const char *fmt, va_list ap) {
 	int len;
 
-	len = vsnprintf((char *) buf, sz, fmt, ap);
+	len = DUK_VSNPRINTF((char *) buf, sz, fmt, ap);
 	if (len < sz) {
 		return len;
 	}
@@ -2561,7 +2568,7 @@ const char *duk_push_vsprintf(duk_context *ctx, const char *fmt, va_list ap) {
 	}
 
 	/* FIXME: buffer to string */
-	res = duk_push_lstring(ctx, buf, len);  /* [buf res] */
+	res = duk_push_lstring(ctx, (const char *) buf, (size_t) len);  /* [buf res] */
 	duk_remove(ctx, -2);
 	return res;
 }
@@ -2671,7 +2678,7 @@ int duk_push_thread(duk_context *ctx) {
 	obj = duk_hthread_alloc(thr->heap,
 	                        DUK_HOBJECT_FLAG_EXTENSIBLE |
 	                        DUK_HOBJECT_FLAG_THREAD |
-	                        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJECT));
+	                        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_THREAD));
 	if (!obj) {
 		DUK_ERROR(thr, DUK_ERR_ALLOC_ERROR, "failed to allocate a thread object");
 	}
@@ -2805,17 +2812,14 @@ int duk_push_c_function(duk_context *ctx, duk_c_function func, int nargs) {
 	return 0;  /* not reached */
 }
 
-int duk_push_error_object(duk_context *ctx, int err_code, const char *fmt, ...) {
+static int duk_push_error_object_vsprintf(duk_context *ctx, int err_code, const char *filename, int line, const char *fmt, va_list ap) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	int retval;
-	va_list ap;
 	duk_hobject *errobj;
 	duk_hobject *proto;
 
 	DUK_ASSERT(ctx != NULL);
 	DUK_ASSERT(thr != NULL);
-
-	va_start(ap, fmt);
 
 	retval = duk_push_object_helper(ctx,
 	                                DUK_HOBJECT_FLAG_EXTENSIBLE |
@@ -2832,13 +2836,22 @@ int duk_push_error_object(duk_context *ctx, int err_code, const char *fmt, ...) 
 	if (fmt) {
 		duk_push_vsprintf(ctx, fmt, ap);
 		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_MESSAGE, DUK_PROPDESC_FLAGS_WC);
+	} else {
+		/* If no explicit message given, put error code into message field
+		 * (as a number).  This is not fully in keeping with the Ecmascript
+		 * error model because messages are supposed to be strings (Error
+		 * constructors use ToString() on their argument).  However, it's
+		 * probably more useful than having a separate 'code' property.
+		 */
+		duk_push_int(ctx, err_code);
+		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_MESSAGE, DUK_PROPDESC_FLAGS_WC);
 	}
 
-	/* 'code' property is custom */
+#if 0
+	/* Disabled for now, not sure this is a useful property */
 	duk_push_int(ctx, err_code);
 	duk_def_prop_stridx(ctx, -2, DUK_STRIDX_CODE, DUK_PROPDESC_FLAGS_WC);
-
-	va_end(ap);
+#endif
 
 	/* Note: errors should be augmented when they are created, not when
 	 * they are thrown or rethrown.  The caller should augment the newly
@@ -2846,11 +2859,39 @@ int duk_push_error_object(duk_context *ctx, int err_code, const char *fmt, ...) 
 	 */
 
 #ifdef DUK_USE_AUGMENT_ERRORS
-	duk_err_augment_error(thr, thr, -1);  /* may throw an error */
+	/* filename may be NULL in which case file/line is not recorded */
+	duk_err_augment_error(thr, thr, -1, filename, line);  /* may throw an error */
 #endif
 
 	return retval;
+
 }
+
+int duk_push_error_object_raw(duk_context *ctx, int err_code, const char *filename, int line, const char *fmt, ...) {
+	va_list ap;
+	int ret;
+
+	va_start(ap, fmt);
+	ret = duk_push_error_object_vsprintf(ctx, err_code, filename, line, fmt, ap);
+	va_end(ap);
+	return ret;
+}
+
+#ifndef DUK_USE_VARIADIC_MACROS
+int duk_push_error_object_stash(duk_context *ctx, int err_code, const char *fmt, ...) {
+	const char *filename = duk_api_global_filename;
+	int line = duk_api_global_line;
+	va_list ap;
+	int ret;
+
+	duk_api_global_filename = NULL;
+	duk_api_global_line = 0;
+	va_start(ap, fmt);
+	ret = duk_push_error_object_vsprintf(ctx, err_code, filename, line, fmt, ap);
+	va_end(ap);
+	return ret;
+}
+#endif
 
 /* FIXME: repetition, see duk_push_object */
 void *duk_push_buffer(duk_context *ctx, size_t size, int dynamic) {
@@ -3051,16 +3092,29 @@ void duk_fatal(duk_context *ctx, int err_code) {
 	DUK_NEVER_HERE();
 }
 
-void duk_error(duk_context *ctx, int err_code, const char *fmt, ...) {
-	/* FIXME: push_error_object_vsprintf? */
+void duk_error_raw(duk_context *ctx, int err_code, const char *filename, int line, const char *fmt, ...) {
 	va_list ap;
-
 	va_start(ap, fmt);
-	duk_push_vsprintf(ctx, fmt, ap);
+	duk_push_error_object_vsprintf(ctx, err_code, filename, line, fmt, ap);
 	va_end(ap);
-	duk_push_error_object(ctx, err_code, "%s", duk_get_string(ctx, -1));
 	duk_throw(ctx);
 }
+
+#ifndef DUK_USE_VARIADIC_MACROS
+void duk_error_stash(duk_context *ctx, int err_code, const char *fmt, ...) {
+	const char *filename = duk_api_global_filename;
+	int line = duk_api_global_line;
+	va_list ap;
+
+	duk_api_global_filename = NULL;
+	duk_api_global_line = 0;
+
+	va_start(ap, fmt);
+	duk_push_error_object_vsprintf(ctx, err_code, filename, line, fmt, ap);
+	va_end(ap);
+	duk_throw(ctx);
+}
+#endif
 
 int duk_equals(duk_context *ctx, int index1, int index2) {
 	duk_hthread *thr = (duk_hthread *) ctx;

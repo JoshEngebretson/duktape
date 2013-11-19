@@ -12,7 +12,7 @@
 
 # FIXME: stripping and size reporting
 
-VERSION=0.6.0
+VERSION=0.7.0
 
 DISTSRCSEP = dist/src-separate
 DISTSRCCOM = dist/src
@@ -63,7 +63,6 @@ DUKTAPE_SOURCES_SEPARATE =	\
 	$(DISTSRCSEP)/duk_hbuffer_ops.c \
 	$(DISTSRCSEP)/duk_unicode_tables.c \
 	$(DISTSRCSEP)/duk_unicode_support.c \
-	$(DISTSRCSEP)/duk_strings.c \
 	$(DISTSRCSEP)/duk_builtins.c \
 	$(DISTSRCSEP)/duk_js_ops.c \
 	$(DISTSRCSEP)/duk_js_var.c \
@@ -98,7 +97,9 @@ DUKTAPE_SOURCES_SEPARATE =	\
 	$(DISTSRCSEP)/duk_builtin_number.c \
 	$(DISTSRCSEP)/duk_builtin_object.c \
 	$(DISTSRCSEP)/duk_builtin_regexp.c \
-	$(DISTSRCSEP)/duk_builtin_string.c
+	$(DISTSRCSEP)/duk_builtin_string.c \
+	$(DISTSRCSEP)/duk_builtin_buffer.c \
+	$(DISTSRCSEP)/duk_builtin_pointer.c
 
 # Use combined sources for testing etc.
 DUKTAPE_SOURCES = $(DUKTAPE_SOURCES_COMBINED)
@@ -106,10 +107,7 @@ DUKTAPE_SOURCES = $(DUKTAPE_SOURCES_COMBINED)
 # Duktape command line tool - example of a main() program, used
 # for unit testing
 DUKTAPE_CMDLINE_SOURCES = \
-	$(DISTCMD)/duk_cmdline.c \
-	$(DISTCMD)/duk_ncurses.c \
-	$(DISTCMD)/duk_socket.c \
-	$(DISTCMD)/duk_fileio.c
+	$(DISTCMD)/duk_cmdline.c
 
 DUK_SHARED_LIBS_NONDEBUG = \
 	libduktape100.so.1.0.0 libduktape101.so.1.0.0 \
@@ -170,6 +168,7 @@ all64:	duk.400 duk.401 \
 
 clean:
 	-@rm -rf dist/
+	-@rm -rf full/
 	-@rm -f $(DUK_CMDLINE_TOOLS_NONDEBUG)
 	-@rm -f $(DUK_CMDLINE_TOOLS_DEBUG)
 	-@rm -f $(DUK_SHARED_LIBS_NONDEBUG)
@@ -179,13 +178,13 @@ clean:
 	-@rm -f src/*.pyc
 
 $(DUK_SHARED_LIBS_NONDEBUG): dist
-	-rm -f $(subst .so.1.0.0,.so.1,$@) $(subst .so.1.0.0,.so.1.0.0,$@)
+	-rm -f $(subst .so.1.0.0,.so.1,$@) $(subst .so.1.0.0,.so.1.0.0,$@) $(subst .so.1.0.0,.so,$@)
 	$(CC) -o $@ -shared -Wl,-soname,$(subst .so.1.0.0,.so.1,$@) -fPIC -DDUK_PROFILE=$(subst d,,$(subst .so.1.0.0,,$(subst libduktape,,$@))) $(CCOPTS_NONDEBUG) $(DUKTAPE_SOURCES) $(CCLIBS)
 	ln -s $@ $(subst .so.1.0.0,.so.1,$@)
 	ln -s $@ $(subst .so.1.0.0,.so,$@)
 
 $(DUK_SHARED_LIBS_DEBUG): dist
-	-rm -f $(subst .so.1.0.0,.so.1,$@) $(subst .so.1.0.0,.so.1.0.0,$@)
+	-rm -f $(subst .so.1.0.0,.so.1,$@) $(subst .so.1.0.0,.so.1.0.0,$@) $(subst .so.1.0.0,.so,$@)
 	$(CC) -o $@ -shared -Wl,-soname,$(subst .so.1.0.0,.so.1,$@) -fPIC -DDUK_PROFILE=$(subst d,,$(subst .so.1.0.0,,$(subst libduktape,,$@))) $(CCOPTS_DEBUG) $(DUKTAPE_SOURCES) $(CCLIBS)
 	ln -s $@ $(subst .so.1.0.0,.so.1,$@)
 	ln -s $@ $(subst .so.1.0.0,.so,$@)
@@ -196,19 +195,26 @@ $(DUK_CMDLINE_TOOLS_NONDEBUG): dist
 $(DUK_CMDLINE_TOOLS_DEBUG): dist
 	$(CC) -o $@ -DDUK_PROFILE=$(subst d,,$(subst duk.,,$@)) $(CCOPTS_DEBUG) $(DUKTAPE_SOURCES) $(DUKTAPE_CMDLINE_SOURCES) $(CCLIBS)
 
-test:	duk.400
+test:	npminst duk.400
 	node runtests/runtests.js --run-duk --cmd-duk=$(shell pwd)/duk.400 --run-nodejs --run-rhino --num-threads 8 --log-file=/tmp/duk-test.log ecmascript-testcases/
 
-qtest:	duk.400
+qtest:	npminst duk.400
 	node runtests/runtests.js --run-duk --cmd-duk=$(shell pwd)/duk.400 --num-threads 16 --log-file=/tmp/duk-test.log ecmascript-testcases/
 
-vgtest:		duk.400
+vgtest:	npminst duk.400
 	node runtests/runtests.js --run-duk --cmd-duk=$(shell pwd)/duk.400 --num-threads 1 --log-file=/tmp/duk-vgtest.log --valgrind --verbose ecmascript-testcases/
 
-apitest:	libduktape400.so.1.0.0
+apitest:	npminst libduktape400.so.1.0.0
 	node runtests/runtests.js --num-threads 1 --log-file=/tmp/duk-api-test.log api-testcases/
 
 # FIXME: torturetest; torture + valgrind
+
+.PHONY:	npminst
+npminst:	runtests/node_modules
+
+runtests/node_modules:
+	echo "Installing required NodeJS modules for runtests"
+	cd runtests; npm install
 
 .PHONY:	doc
 doc:	$(patsubst %.txt,%.html,$(wildcard doc/*.txt))

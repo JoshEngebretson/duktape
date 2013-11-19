@@ -28,7 +28,7 @@ static void json_dec_reviver_walk(duk_json_dec_ctx *js_ctx);
 
 static void json_emit_1(duk_json_enc_ctx *js_ctx, char ch);
 static void json_emit_2(duk_json_enc_ctx *js_ctx, int chars);
-static void json_emit_esc(duk_json_enc_ctx *js_ctx, duk_u32 cp, char *esc_str, int digits);
+static void json_emit_esc(duk_json_enc_ctx *js_ctx, duk_u32 cp, const char *esc_str, int digits);
 static void json_emit_esc16(duk_json_enc_ctx *js_ctx, duk_u32 cp);
 static void json_emit_esc32(duk_json_enc_ctx *js_ctx, duk_u32 cp);
 static void json_emit_xutf8(duk_json_enc_ctx *js_ctx, duk_u32 cp);
@@ -630,7 +630,7 @@ static void json_emit_2(duk_json_enc_ctx *js_ctx, int chars) {
 	duk_hbuffer_append_bytes(js_ctx->thr, js_ctx->h_buf, (duk_u8 *) buf, 2);
 }
 
-static void json_emit_esc(duk_json_enc_ctx *js_ctx, duk_u32 cp, char *esc_str, int digits) {
+static void json_emit_esc(duk_json_enc_ctx *js_ctx, duk_u32 cp, const char *esc_str, int digits) {
 	int dig;
 
 	duk_hbuffer_append_cstring(js_ctx->thr, js_ctx->h_buf, esc_str);
@@ -1141,7 +1141,7 @@ static int json_enc_value1(duk_json_enc_ctx *js_ctx, int idx_holder) {
 	tv = duk_get_tval(ctx, -1);
 	DUK_ASSERT(tv != NULL);
 
-	if (duk_get_type_mask(ctx, -1) & js_ctx->mask_for_undefined) {
+	if (duk_check_type_mask(ctx, -1, js_ctx->mask_for_undefined)) {
 		/* will result in undefined */
 		DUK_DDDPRINT("-> will result in undefined (type mask check)");
 		goto undef;
@@ -1209,14 +1209,14 @@ static void json_enc_value2(duk_json_enc_ctx *js_ctx) {
 		const char *fmt;
 
 		/* FIXME: NULL results in '((nil))' now */
-		memset(buf, 0, sizeof(buf));
+		DUK_MEMSET(buf, 0, sizeof(buf));
 		if (js_ctx->flag_ext_custom) {
 			fmt = "(%p)";
 		} else {
 			DUK_ASSERT(js_ctx->flag_ext_compatible);
 			fmt = "{\"_ptr\":\"(%p)\"}";
 		}
-		snprintf(buf, sizeof(buf) - 1, fmt, (void *) DUK_TVAL_GET_POINTER(tv));
+		DUK_SNPRINTF(buf, sizeof(buf) - 1, fmt, (void *) DUK_TVAL_GET_POINTER(tv));
 		EMIT_CSTR(js_ctx, buf);
 		break;
 	}
@@ -1289,11 +1289,11 @@ static void json_enc_value2(duk_json_enc_ctx *js_ctx) {
 		DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
 
 		d = DUK_TVAL_GET_NUMBER(tv);
-		c = fpclassify(d);
-		s = signbit(d);
+		c = DUK_FPCLASSIFY(d);
+		s = DUK_SIGNBIT(d);
 
-		if (!(c == FP_INFINITE || c == FP_NAN)) {
-			DUK_ASSERT(isfinite(d));
+		if (!(c == DUK_FP_INFINITE || c == DUK_FP_NAN)) {
+			DUK_ASSERT(DUK_ISFINITE(d));
 			n2s_flags = 0;
 			/* [ ... number ] -> [ ... string ] */
 			duk_numconv_stringify(ctx, 10 /*radix*/, 0 /*digits*/, n2s_flags);
@@ -1308,7 +1308,7 @@ static void json_enc_value2(duk_json_enc_ctx *js_ctx) {
 		if (!(js_ctx->flags & (DUK_JSON_ENC_FLAG_EXT_CUSTOM |
 		                       DUK_JSON_ENC_FLAG_EXT_COMPATIBLE))) {
 			stridx = DUK_STRIDX_NULL;
-		} else if (c == FP_NAN) {
+		} else if (c == DUK_FP_NAN) {
 			stridx = js_ctx->stridx_custom_nan;
 		} else if (s == 0) {
 			stridx = js_ctx->stridx_custom_neginf;
@@ -1365,7 +1365,7 @@ void duk_builtin_json_parse_helper(duk_context *ctx,
 	             duk_get_tval(ctx, idx_value), duk_get_tval(ctx, idx_reviver),
 	             flags, duk_get_top(ctx));
 
-	memset(&js_ctx_alloc, 0, sizeof(js_ctx_alloc));
+	DUK_MEMSET(&js_ctx_alloc, 0, sizeof(js_ctx_alloc));
 	js_ctx->thr = thr;
 #ifdef DUK_USE_EXPLICIT_NULL_INIT
 	/* nothing now */
@@ -1445,7 +1445,7 @@ void duk_builtin_json_stringify_helper(duk_context *ctx,
 	 *  Context init
 	 */
 
-	memset(&js_ctx_alloc, 0, sizeof(js_ctx_alloc));
+	DUK_MEMSET(&js_ctx_alloc, 0, sizeof(js_ctx_alloc));
 	js_ctx->thr = thr;
 #ifdef DUK_USE_EXPLICIT_NULL_INIT
 	js_ctx->h_replacer = NULL;

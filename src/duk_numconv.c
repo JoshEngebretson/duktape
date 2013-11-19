@@ -91,12 +91,12 @@ static void bi_print(const char *name, duk_bigint *x) {
 	char *p = buf;
 	int i;
 
-	p += sprintf(p, "%p n=%d", (void *) x, x->n);
+	p += DUK_SPRINTF(p, "%p n=%d", (void *) x, x->n);
 	if (x->n == 0) {
-		p += sprintf(p, " 0");
+		p += DUK_SPRINTF(p, " 0");
 	}
 	for (i = x->n - 1; i >= 0; i--) {
-		p += sprintf(p, " %08x", (unsigned int) x->v[i]);
+		p += DUK_SPRINTF(p, " %08x", (unsigned int) x->v[i]);
 	}
 
 	DUK_DDDPRINT("%s: %s", name, buf);
@@ -134,7 +134,7 @@ static void bi_copy(duk_bigint *x, duk_bigint *y) {
 	if (n == 0) {
 		return;
 	}
-	memcpy((void *) x->v, (void *) y->v, (size_t) (sizeof(uint32_t) * n));
+	DUK_MEMCPY((void *) x->v, (void *) y->v, (size_t) (sizeof(uint32_t) * n));
 }
 
 static void bi_set_small(duk_bigint *x, uint32_t v) {
@@ -189,6 +189,7 @@ static int bi_compare(duk_bigint *x, duk_bigint *y) {
 }
 
 /* x <- y + z */
+#ifdef DUK_USE_64BIT_OPS
 static void bi_add(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 	uint64_t tmp;
 	int i, ny, nz;
@@ -223,6 +224,58 @@ static void bi_add(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 	/* no need to normalize */
 	DUK_ASSERT(bi_is_valid(x));
 }
+#else  /* DUK_USE_64BIT_OPS */
+static void bi_add(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
+	uint32_t carry, tmp1, tmp2;
+	int i, ny, nz;
+
+	DUK_ASSERT(bi_is_valid(y));
+	DUK_ASSERT(bi_is_valid(z));
+
+	if (z->n > y->n) {
+		duk_bigint *t;
+		t = y; y = z; z = t;
+	}
+	DUK_ASSERT(y->n >= z->n);
+
+	ny = y->n; nz = z->n;
+	carry = 0;
+	for (i = 0; i < ny; i++) {
+		/* Carry is detected based on wrapping which relies on exact 32-bit
+		 * types.
+		 */
+		DUK_ASSERT(i < BI_MAX_PARTS);
+		tmp1 = y->v[i];
+		tmp2 = tmp1;
+		if (i < nz) {
+			tmp2 += z->v[i];
+		}
+
+		/* Careful with carry condition:
+		 *  - If carry not added: 0x12345678 + 0 + 0xffffffff = 0x12345677 (< 0x12345678)
+		 *  - If carry added:     0x12345678 + 1 + 0xffffffff = 0x12345678 (== 0x12345678)
+		 */
+		if (carry) {
+			tmp2++;
+			carry = (tmp2 <= tmp1 ? 1 : 0);
+		} else {
+			carry = (tmp2 < tmp1 ? 1 : 0);
+		}
+
+		x->v[i] = tmp2;
+	}
+	if (carry) {
+		DUK_ASSERT(i < BI_MAX_PARTS);
+		DUK_ASSERT(carry == 1);
+		x->v[i++] = carry;
+	}
+	x->n = i;
+	DUK_ASSERT(x->n <= BI_MAX_PARTS);
+
+	/* no need to normalize */
+	DUK_ASSERT(bi_is_valid(x));
+}
+#endif  /* DUK_USE_64BIT_OPS */
 
 /* x <- y + z */
 static void bi_add_small(duk_bigint *x, duk_bigint *y, uint32_t z) {
@@ -246,6 +299,7 @@ static void bi_add_copy(duk_bigint *x, duk_bigint *y, duk_bigint *t) {
 #endif
 
 /* x <- y - z, require x >= y => z >= 0, i.e. y >= z */
+#ifdef DUK_USE_64BIT_OPS
 static void bi_sub(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 	int ny, nz;
 	int i;
@@ -276,6 +330,49 @@ static void bi_sub(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 	bi_normalize(x);  /* need to normalize, may even cancel to 0 */
 	DUK_ASSERT(bi_is_valid(x));
 }
+#else
+static void bi_sub(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
+	int ny, nz;
+	int i;
+	uint32_t tmp1, tmp2, borrow;
+
+	DUK_ASSERT(bi_is_valid(y));
+	DUK_ASSERT(bi_is_valid(z));
+	DUK_ASSERT(bi_compare(y, z) >= 0);
+	DUK_ASSERT(y->n >= z->n);
+
+	ny = y->n; nz = z->n;
+	borrow = 0;
+	for (i = 0; i < ny; i++) {
+		/* Borrow is detected based on wrapping which relies on exact 32-bit
+		 * types.
+		 */
+		tmp1 = y->v[i];
+		tmp2 = tmp1;
+		if (i < nz) {
+			tmp2 -= z->v[i];
+		}
+
+		/* Careful with borrow condition:
+		 *  - If borrow not subtracted: 0x12345678 - 0 - 0xffffffff = 0x12345679 (> 0x12345678)
+		 *  - If borrow subtracted:     0x12345678 - 1 - 0xffffffff = 0x12345678 (== 0x12345678)
+		 */
+		if (borrow) {
+			tmp2--;
+			borrow = (tmp2 >= tmp1 ? 1 : 0);
+		} else {
+			borrow = (tmp2 > tmp1 ? 1 : 0);
+		}
+
+		x->v[i] = tmp2;
+	}
+	DUK_ASSERT(borrow == 0);
+
+	x->n = i;
+	bi_normalize(x);  /* need to normalize, may even cancel to 0 */
+	DUK_ASSERT(bi_is_valid(x));
+}
+#endif
 
 #if 0  /* unused */
 /* x <- y - z */
@@ -301,7 +398,6 @@ static void bi_sub_copy(duk_bigint *x, duk_bigint *y, duk_bigint *t) {
 /* x <- y * z */
 static void bi_mul(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 	int i, j, nx, nz;
-	uint64_t tmp;
 
 	DUK_ASSERT(bi_is_valid(y));
 	DUK_ASSERT(bi_is_valid(z));
@@ -317,12 +413,13 @@ static void bi_mul(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 		return;
 	}
 
-	memset((void *) x->v, 0, (size_t) (sizeof(uint32_t) * nx));
+	DUK_MEMSET((void *) x->v, 0, (size_t) (sizeof(uint32_t) * nx));
 	x->n = nx;
 
 	nz = z->n;
 	for (i = 0; i < y->n; i++) {
-		tmp = 0;
+#ifdef DUK_USE_64BIT_OPS
+		uint64_t tmp = 0;
 		for (j = 0; j < nz; j++) {
 			tmp += (uint64_t) y->v[i] * (uint64_t) z->v[j] + x->v[i+j];
 			x->v[i+j] = (uint32_t) (tmp & 0xffffffffU);
@@ -331,8 +428,78 @@ static void bi_mul(duk_bigint *x, duk_bigint *y, duk_bigint *z) {
 		if (tmp > 0) {
 			DUK_ASSERT(i + j < nx);
 			DUK_ASSERT(i + j < BI_MAX_PARTS);
-			x->v[i+j] += (uint32_t) tmp;
+			DUK_ASSERT(x->v[i+j] == 0);
+			x->v[i+j] = (uint32_t) tmp;
 		}
+#else
+		/*
+		 *  Multiply + add + carry for 32-bit components using only 16x16->32
+		 *  multiplies and carry detection based on unsigned overflow.
+		 *
+		 *    1st mult, 32-bit: (A*2^16 + B)
+		 *    2nd mult, 32-bit: (C*2^16 + D)
+		 *    3rd add, 32-bit: E
+		 *    4th add, 32-bit: F
+		 *
+		 *      (AC*2^16 + B) * (C*2^16 + D) + E + F
+		 *    = AC*2^32 + AD*2^16 + BC*2^16 + BD + E + F
+		 *    = AC*2^32 + (AD + BC)*2^16 + (BD + E + F)
+		 *    = AC*2^32 + AD*2^16 + BC*2^16 + (BD + E + F)
+		 */
+		uint32_t a, b, c, d, e, f;
+		uint32_t r, s, t;
+
+		a = y->v[i]; b = a & 0xffff; a = a >> 16;
+
+		f = 0;
+		for (j = 0; j < nz; j++) {
+			c = z->v[j]; d = c & 0xffff; c = c >> 16;
+			e = x->v[i+j];
+
+			/* build result as: (r << 32) + s: start with (BD + E + F) */
+			r = 0;
+			s = b * d;
+
+			/* add E */
+			t = s + e;
+			if (t < s) { r++; }  /* carry */
+			s = t;
+
+			/* add F */
+			t = s + f;
+			if (t < s) { r++; }  /* carry */
+			s = t;
+
+			/* add BC*2^16 */
+			t = b * c;
+			r += (t >> 16);
+			t = s + ((t & 0xffff) << 16);
+			if (t < s) { r++; }  /* carry */
+			s = t;
+
+			/* add AD*2^16 */
+			t = a * d;
+			r += (t >> 16);
+			t = s + ((t & 0xffff) << 16);
+			if (t < s) { r++; }  /* carry */
+			s = t;
+
+			/* add AC*2^32 */
+			t = a * c;
+			r += t;
+
+			DUK_DDDPRINT("ab=%08x cd=%08x ef=%08x -> rs=%08x %08x", y->v[i], z->v[j], x->v[i+j], r, s);
+
+			x->v[i+j] = s;
+			f = r;
+		}
+		if (f > 0) {
+			DUK_ASSERT(i + j < nx);
+			DUK_ASSERT(i + j < BI_MAX_PARTS);
+			DUK_ASSERT(x->v[i+j] == 0);
+			x->v[i+j] = (uint32_t) f;
+		}
+#endif  /* DUK_USE_64BIT_OPS */
 	}
 
 	bi_normalize(x);
@@ -392,7 +559,7 @@ static void bi_twoexp(duk_bigint *x, int y) {
 	n = (y / 32) + 1;
 	DUK_ASSERT(n > 0);
 	r = y % 32;
-	memset((void *) x->v, 0, sizeof(uint32_t) * n);
+	DUK_MEMSET((void *) x->v, 0, sizeof(uint32_t) * n);
 	x->n = n;
 	x->v[n - 1] = (((uint32_t) 1) << r);
 }
@@ -528,7 +695,7 @@ size_t dragon4_format_uint32(char *buf, unsigned int x, int radix) {
 	}
 	len = (buf + 32) - p;
 
-	memmove((void *) buf, (void *) p, len);
+	DUK_MEMMOVE((void *) buf, (void *) p, len);
 
 	return len;
 }
@@ -923,7 +1090,7 @@ static void dragon4_generate(duk_numconv_stringify_ctx *nc_ctx) {
 	{
 		char buf[2048];
 		int i, t;
-		memset(buf, 0, sizeof(buf));
+		DUK_MEMSET(buf, 0, sizeof(buf));
 		for (i = 0; i < nc_ctx->count; i++) {
 			t = nc_ctx->digits[i];
 			if (t < 0 || t > 36) {
@@ -986,9 +1153,9 @@ static int dragon4_fixed_format_round(duk_numconv_stringify_ctx *nc_ctx, int rou
 			*p = 0;
 			if (p == &nc_ctx->digits[0]) {
 				DUK_DDDPRINT("carry propagated to first digit -> special case handling");
-				memmove((void *) (&nc_ctx->digits[1]),
-				        (void *) (&nc_ctx->digits[0]),
-				        (size_t) (sizeof(char) * nc_ctx->count));
+				DUK_MEMMOVE((void *) (&nc_ctx->digits[1]),
+				            (void *) (&nc_ctx->digits[0]),
+				            (size_t) (sizeof(char) * nc_ctx->count));
 				nc_ctx->digits[0] = 1;  /* don't increase 'count' */
 				nc_ctx->k++;  /* position of highest digit changed */
 				nc_ctx->count++;  /* number of digits changed */
@@ -1354,19 +1521,19 @@ void duk_numconv_stringify(duk_context *ctx, int radix, int digits, int flags) {
 	 *  Handle special cases (NaN, infinity, zero).
 	 */
 
-	c = fpclassify(x);
-	if (signbit(x)) {
+	c = DUK_FPCLASSIFY(x);
+	if (DUK_SIGNBIT(x)) {
 		x = -x;
 		neg = 1;
 	} else {
 		neg = 0;
 	}
-	DUK_ASSERT(signbit(x) == 0);
+	DUK_ASSERT(DUK_SIGNBIT(x) == 0);
 
-	if (c == FP_NAN) {
+	if (c == DUK_FP_NAN) {
 		duk_push_hstring_stridx(ctx, DUK_STRIDX_NAN);
 		return;
-	} else if (c == FP_INFINITE) {
+	} else if (c == DUK_FP_INFINITE) {
 		if (neg) {
 			/* -Infinity */
 			duk_push_hstring_stridx(ctx, DUK_STRIDX_MINUS_INFINITY);
@@ -1375,7 +1542,7 @@ void duk_numconv_stringify(duk_context *ctx, int radix, int digits, int flags) {
 			duk_push_hstring_stridx(ctx, DUK_STRIDX_INFINITY);
 		}
 		return;
-	} else if (c == FP_ZERO) {
+	} else if (c == DUK_FP_ZERO) {
 		/* We can't shortcut zero here if it goes through special formatting
 		 * (such as forced exponential notation).
 		 */
@@ -1425,7 +1592,7 @@ void duk_numconv_stringify(duk_context *ctx, int radix, int digits, int flags) {
 	 * is 1-2 kilobytes and nothing should rely on it being zeroed.
 	 */
 #if 0
-	memset((void *) nc_ctx, 0, sizeof(*nc_ctx));  /* slow init, do only for slow path cases */
+	DUK_MEMSET((void *) nc_ctx, 0, sizeof(*nc_ctx));  /* slow init, do only for slow path cases */
 #endif
 
 	nc_ctx->is_s2n = 0;
@@ -1448,7 +1615,7 @@ void duk_numconv_stringify(duk_context *ctx, int radix, int digits, int flags) {
 		nc_ctx->req_digits = 0;
 	}
 
-	if (c == FP_ZERO) {
+	if (c == DUK_FP_ZERO) {
 		/* Zero special case: fake requested number of zero digits; ensure
 		 * no sign bit is printed.  Relative and absolute fixed format
 		 * require separate handling.
@@ -1465,7 +1632,7 @@ void duk_numconv_stringify(duk_context *ctx, int radix, int digits, int flags) {
 		}
 		DUK_DDDPRINT("count=%d", count);
 		DUK_ASSERT(count >= 1);
-		memset((void *) nc_ctx->digits, 0, count);
+		DUK_MEMSET((void *) nc_ctx->digits, 0, count);
 		nc_ctx->count = count;
 		nc_ctx->k = 1;  /* 0.000... */
 		neg = 0;
@@ -1642,13 +1809,13 @@ void duk_numconv_parse(duk_context *ctx, int radix, int flags) {
 
 		/* borrow literal Infinity from builtin string */
 		q = (const unsigned char *) DUK_HSTRING_GET_DATA(DUK_HTHREAD_STRING_INFINITY(thr));
-		if (strcmp((const char *) p, (const char *) q) == 0) {
+		if (DUK_STRCMP((const char *) p, (const char *) q) == 0) {
 			if (!allow_garbage && (p[8] != (unsigned char) 0)) {
 				DUK_DDDPRINT("parse failed: trailing garbage after matching 'Infinity' not allowed");
 				goto parse_fail;
 			} else {
 				/* FIXME: compile warning here on gcc-4.0, floating constant exceeds range of 'float' */
-				res = INFINITY;
+				res = DUK_DOUBLE_INFINITY;
 				goto neg_and_ret;
 			}
 		}
@@ -1987,8 +2154,7 @@ void duk_numconv_parse(duk_context *ctx, int radix, int flags) {
 	explim = &str2num_exp_limits[radix - 2];
 	if (exp > explim->upper) {
 		DUK_DDDPRINT("exponent too large -> infinite");
-		/* FIXME: compile warning here on gcc-4.0, floating constant exceeds range of 'float' */
-		res = INFINITY;
+		res = DUK_DOUBLE_INFINITY;
 		goto neg_and_ret;
 	} else if (exp < explim->lower) {
 		DUK_DDDPRINT("exponent too small -> zero");

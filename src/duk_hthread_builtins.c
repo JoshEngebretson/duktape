@@ -19,7 +19,7 @@ typedef union {
  *  Encoding constants, must match genbuiltins.py
  */
 
-#define  CLASS_BITS                  4
+#define  CLASS_BITS                  5
 #define  BIDX_BITS                   6
 #define  STRIDX_BITS                 9  /* FIXME: try to optimize to 8 */
 #define  NATIDX_BITS                 8
@@ -44,6 +44,7 @@ typedef union {
 #define  PROP_TYPE_UNDEFINED         4
 #define  PROP_TYPE_BOOLEAN_TRUE      5
 #define  PROP_TYPE_BOOLEAN_FALSE     6
+#define  PROP_TYPE_ACCESSOR          7
 
 /*
  *  Create built-in objects by parsing an init bitstream generated
@@ -59,7 +60,7 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 
 	DUK_DPRINT("INITBUILTINS BEGIN");
 
-	memset(&bd_ctx, 0, sizeof(bd_ctx));
+	DUK_MEMSET(&bd_ctx, 0, sizeof(bd_ctx));
 	bd->data = (duk_u8 *) duk_builtins_data;
 	bd->length = DUK_BUILTINS_DATA_LENGTH;
 
@@ -68,6 +69,10 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 	 *  During init, their indices will correspond to built-in indices.
 	 *
 	 *  Built-ins will be reachable from both valstack and thr->builtins.
+	 */
+
+	/* XXX: there is no need to resize valstack because builtin count
+	 * is much less than the default space; assert for it.
 	 */
 
 	DUK_DDPRINT("create empty built-ins");
@@ -210,7 +215,7 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 
 		t = duk_bd_decode(bd, BIDX_BITS);
 		if (t != NO_BIDX_MARKER) {
-			DUK_DDDPRINT("set prototype: built-in %d", (int) t);
+			DUK_DDDPRINT("set internal prototype: built-in %d", (int) t);
 			DUK_HOBJECT_SET_PROTOTYPE(thr, h, thr->builtins[t]);
 		}
 
@@ -324,13 +329,44 @@ void duk_hthread_create_builtin_objects(duk_hthread *thr) {
 				duk_push_false(ctx);
 				break;
 			}
+			case PROP_TYPE_ACCESSOR: {
+				int natidx_getter = duk_bd_decode(bd, NATIDX_BITS);
+				int natidx_setter = duk_bd_decode(bd, NATIDX_BITS);
+				duk_c_function c_func_getter;
+				duk_c_function c_func_setter;
+
+				/* XXX: this is a bit awkward because there is no exposed helper
+				 * in the API style, only this internal helper.
+				 */
+				DUK_DDDPRINT("built-in accessor property: objidx=%d, stridx=%d, getteridx=%d, setteridx=%d, flags=0x%04x",
+				             i, stridx, natidx_getter, natidx_setter, prop_flags);
+
+				c_func_getter = duk_builtin_native_functions[natidx_getter];
+				c_func_setter = duk_builtin_native_functions[natidx_setter];
+				duk_push_c_function(ctx, c_func_getter, 0);  /* always 0 args */
+				duk_push_c_function(ctx, c_func_setter, 1);  /* always 1 arg */
+
+				prop_flags |= DUK_PROPDESC_FLAG_ACCESSOR;  /* accessor flag not encoded explicitly */
+				duk_hobject_define_accessor_internal(thr,
+				                                     duk_require_hobject(ctx, i),
+				                                     DUK_HTHREAD_GET_STRING(thr, stridx),
+				                                     duk_require_hobject(ctx, -2),
+				                                     duk_require_hobject(ctx, -1),
+				                                     prop_flags);
+				duk_pop_2(ctx);  /* getter and setter, now reachable through object */
+				goto skip_value;
+			}
 			default: {
 				/* exhaustive */
 				DUK_NEVER_HERE();
 			}
 			}
 
+			DUK_ASSERT((prop_flags & DUK_PROPDESC_FLAG_ACCESSOR) == 0);
 			duk_def_prop_stridx(ctx, i, stridx, prop_flags);
+
+		 skip_value:
+			continue;  /* avoid empty label at the end of a compound statement */
 		}
 
 		/* native function properties */

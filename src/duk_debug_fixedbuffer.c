@@ -12,11 +12,11 @@ void duk_fb_put_bytes(duk_fixedbuffer *fb, duk_u8 *buffer, duk_u32 length) {
 
 	avail = (fb->offset >= fb->length ? (duk_u32) 0 : (duk_u32) (fb->length - fb->offset));
 	if (length > avail) {
-		memcpy(fb->buffer + fb->offset, buffer, avail);
+		DUK_MEMCPY(fb->buffer + fb->offset, buffer, avail);
 		fb->offset += avail;
 		fb->truncated = 1;
 	} else {
-		memcpy(fb->buffer + fb->offset, buffer, length);
+		DUK_MEMCPY(fb->buffer + fb->offset, buffer, length);
 		fb->offset += length;
 	}
 }
@@ -25,7 +25,7 @@ void duk_fb_put_byte(duk_fixedbuffer *fb, duk_u8 x) {
 	duk_fb_put_bytes(fb, &x, 1);
 }
 
-void duk_fb_put_cstring(duk_fixedbuffer *fb, char *x) {
+void duk_fb_put_cstring(duk_fixedbuffer *fb, const char *x) {
 	duk_fb_put_bytes(fb, (duk_u8 *) x, (duk_u32) strlen(x));
 }
 
@@ -36,7 +36,7 @@ void duk_fb_sprintf(duk_fixedbuffer *fb, const char *fmt, ...) {
 	va_start(ap, fmt);
 	avail = (fb->offset >= fb->length ? (duk_u32) 0 : (duk_u32) (fb->length - fb->offset));
 	if (avail > 0) {
-		int res = vsnprintf((char *) (fb->buffer + fb->offset), avail, fmt, ap);
+		int res = DUK_VSNPRINTF((char *) (fb->buffer + fb->offset), avail, fmt, ap);
 		if (res < 0) {
 			/* error */
 		} else if (res >= avail) {

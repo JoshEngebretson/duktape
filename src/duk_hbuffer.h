@@ -12,9 +12,6 @@
 #ifndef DUK_HBUFFER_H_INCLUDED
 #define DUK_HBUFFER_H_INCLUDED
 
-#include "duk_bittypes.h"
-#include "duk_forwdecl.h"
-
 #define  DUK_HBUFFER_FLAG_DYNAMIC        DUK_HEAPHDR_USER_FLAG(0)  /* buffer is resizable */
 
 #define  DUK_HBUFFER_HAS_DYNAMIC(x)      DUK_HEAPHDR_CHECK_FLAG_BITS(&(x)->hdr, DUK_HBUFFER_FLAG_DYNAMIC)
@@ -23,7 +20,7 @@
 
 #define  DUK_HBUFFER_CLEAR_DYNAMIC(x)    DUK_HEAPHDR_CLEAR_FLAG_BITS(&(x)->hdr, DUK_HBUFFER_FLAG_DYNAMIC)
 
-#define  DUK_HBUFFER_FIXED_GET_DATA_PTR(x)         ((duk_u8 *) (&((x)->fixed_data[0])))
+#define  DUK_HBUFFER_FIXED_GET_DATA_PTR(x)         ((duk_u8 *) (((duk_hbuffer_fixed *) (x)) + 1))
 
 #define  DUK_HBUFFER_DYNAMIC_GET_ALLOC_SIZE(x)     ((x)->usable_size + 1)
 #define  DUK_HBUFFER_DYNAMIC_GET_USABLE_SIZE(x)    ((x)->usable_size)
@@ -81,11 +78,12 @@ struct duk_hbuffer_fixed {
 	duk_heaphdr hdr;
 	size_t size;
 
-#ifdef DUK_USE_STRUCT_HACK
-	duk_u8 fixed_data[0];
-#else
-	duk_u8 fixed_data[];
-#endif
+	/* Data follows the struct header.  The struct size is padded by the
+	 * compiler so the buffer data area begins at an aligned address.
+	 * This potentially a few bytes but would be difficult to implement
+	 * portably (for instance, there is no portable way of figuring out
+	 * the packed struct size, since packed attributes are non-portable).
+	 */
 };
 
 struct duk_hbuffer_dynamic {

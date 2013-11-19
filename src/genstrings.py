@@ -10,10 +10,16 @@
 #  the compiler do not strictly need to be.  Strings need to be ordered
 #  so that reserved words are in a certain range (with strict reserved
 #  words grouped together).
-#
-#  XXX: better compression
+
+#  XXX: integrate more tightly with genbuiltins.py
+#  XXX: add code to indicate strings which are needed at runtime
+#       (may be profile dependent); then detect which strings
+#       genbuiltins.py needs, and finally log unused strings
+#       Perhaps string lists need to be added programmatically and
+#       may be omitted based on profile
 #  XXX: avoid debug-related strings in release build (same applies to
 #       other configuration dependent strings, like traceback data)
+#  XXX: better compression
 #  XXX: reserved word stridx's could be made to match token numbers
 #       directly so that a duk_stridx2token[] would not be needed
 #  XXX: improve per string metadata, and sort strings within constraints
@@ -451,6 +457,8 @@ standard_other_string_list = [
 	mkstr("", class_name=True),	# used as a class name for unused/invalid class
 	mkstr(","),			# for array joining
 	mkstr(" "),			# for print()
+	mkstr("\n\t"),			# for tracebacks
+	mkstr("[...]"),			# for tracebacks
 	mkstr("Invalid Date"),		# for invalid Date instances
 	# arguments object (E5 Section 10.6)
 	mkstr("arguments"),
@@ -462,22 +470,26 @@ standard_other_string_list = [
 duk_string_list = [
 	# non-standard class values
 	mkstr("global", custom=True, class_name=True),	# implementation specific but shared by e.g. smjs and V8
+	mkstr("ObjEnv", custom=True, class_name=True),
+	mkstr("DecEnv", custom=True, class_name=True),
+	mkstr("Buffer", custom=True, class_name=True),
+	mkstr("Pointer", custom=True, class_name=True),
+	mkstr("Thread", custom=True, class_name=True),
 
 	# non-standard built-in object names
 	mkstr("ThrowTypeError", custom=True),  # implementation specific, matches V8
 
-	# non-standard error object properties
+	# non-standard error object (or Error.prototype) properties
+	mkstr("stack", custom=True),
 	mkstr("pc", custom=True),
 	mkstr("fileName", custom=True),
 	mkstr("lineNumber", custom=True),
-	mkstr("isNative", custom=True),
-	mkstr("code", custom=True),
-	mkstr("cause", custom=True),
-	mkstr("traceback", custom=True),
-	mkstr("trunc", custom=True),	# FIXME: unused
+	#mkstr("code", custom=True),
+	mkstr("tracedata", custom=True),
 
 	# non-standard function instance properties
-	mkstr("name", custom=True),	# function declaration/expression name (or empty)
+	mkstr("name", custom=True), 	# function declaration/expression name (or empty)
+	mkstr("fileName", custom=True), # filename associated with function (shown in tracebacks)
 
 	# typeof - these produce unfortunate naming conflicts like "Object" vs "object"
 	mkstr("buffer", custom=True),
@@ -500,7 +512,6 @@ duk_string_list = [
 	mkstr("varenv", internal=True, custom=True),
 	mkstr("source", internal=True, custom=True),
 	mkstr("pc2line", internal=True, custom=True),
-	mkstr("filename", internal=True, custom=True),
 
 	# internal properties for thread objects
 
@@ -526,26 +537,40 @@ duk_string_list = [
 	mkstr("target", internal=True, custom=True),	# target object
 	mkstr("this", internal=True, custom=True),	# implicit this binding value
 
+	# fake filename for compiled functions
+	mkstr("compile", custom=True),                  # used as a filename for functions created with Function constructor
+	mkstr("input", custom=True),                    # used as a filename for eval temp function
+
 	# __duk__ object
 	mkstr("__duk__", custom=True),
 	mkstr("version", custom=True),
 	mkstr("build", custom=True),
 	mkstr("addr", custom=True),
 	mkstr("refc", custom=True),
-	mkstr("spawn", custom=True),
-	mkstr("yield", custom=True),
-	mkstr("resume", custom=True),
-	mkstr("curr", custom=True),
 	mkstr("gc", custom=True),
-	mkstr("print", custom=True),
-	mkstr("time", custom=True),
 	mkstr("setFinalizer", custom=True),
 	mkstr("getFinalizer", custom=True),
 	mkstr("enc", custom=True),
 	mkstr("dec", custom=True),
 	mkstr("hex", custom=True),      # enc/dec alg
 	mkstr("base64", custom=True),   # enc/dec alg
-	mkstr("sleep", custom=True),
+	#mkstr("time", custom=True),
+	#mkstr("sleep", custom=True),
+
+	# Buffer constructor
+
+	# Buffer prototype
+
+	# Pointer constructor
+
+	# Pointer prototype
+
+	# Thread constructor
+	mkstr("yield", custom=True),
+	mkstr("resume", custom=True),
+	mkstr("current", custom=True),
+
+	# Thread prototype
 
 	# special literals for custom compatible json encoding
 	# FIXME: placeholders, change later
@@ -645,6 +670,12 @@ special_define_names = {
 	'String': 'UC_STRING',
 	'arguments': 'LC_ARGUMENTS',
 	'Arguments': 'UC_ARGUMENTS',
+	'buffer': 'LC_BUFFER',
+	'Buffer': 'UC_BUFFER',
+	'pointer': 'LC_POINTER',
+	'Pointer': 'UC_POINTER',
+	#'thread': 'LC_THREAD',
+	'Thread': 'UC_THREAD',
 
 	'+Infinity': 'PLUS_INFINITY',
 	'-Infinity': 'MINUS_INFINITY',
@@ -688,6 +719,8 @@ special_define_names = {
 	'': 'EMPTY_STRING',
 	',': 'COMMA',
 	' ': 'SPACE',
+	'\n\t': 'NEWLINE_TAB',
+	'[...]': 'BRACKETED_ELLIPSIS',
 
 	'{"_undefined":true}': 'JSON_EXT_UNDEFINED',
 	'{"_nan":true}': 'JSON_EXT_NAN',
@@ -925,102 +958,72 @@ def gen_string_list():
 
 	return strlist, idx_start_reserved, idx_start_strict_reserved
 
-if __name__ == '__main__':
-	parser = optparse.OptionParser()
-	parser.add_option('--out-header', dest='out_header')
-	parser.add_option('--out-source', dest='out_source')
-	parser.add_option('--out-python', dest='out_python')
-	parser.add_option('--out-bin', dest='out_bin')
-	parser.add_option('--byte-order', dest='byte_order')	# currently unused
-	(opts, args) = parser.parse_args()
+class GenStrings:
+	strlist = None				# list of (name, define) pairs
+	strdata = None				# bit packed initializer data
+	idx_start_reserved = None		# start of reserved keywords
+	idx_start_strict_reserved = None	# start of strict reserved keywords
+	maxlen = None				# length of longest string
+	string_to_index = None			# map of name -> index
+	define_to_index = None			# map of define name -> index
 
-	strlist, idx_start_reserved, idx_start_strict_reserved = gen_string_list()
-	strdata, maxlen = gen_strings_data_bitpacked(strlist)
+	def __init__(self):
+		pass
 
-	# write raw data file
-	f = open(opts.out_bin, 'wb')
-	f.write(strdata)
-	f.close()
+	def processStrings(self):
+		self.strlist, self.idx_start_reserved, self.idx_start_strict_reserved = gen_string_list()
+		self.strdata, self.maxlen = gen_strings_data_bitpacked(self.strlist)
 
-	# write C source file
-	genc = dukutil.GenerateC()
-	genc.emitHeader('genstrings.py')
-	genc.emitArray(strdata, 'duk_strings_data')  # FIXME: unsigned char?
-	genc.emitLine('')
-	genc.emitLine('/* to convert a heap stridx to a token number, subtract')
-	genc.emitLine(' * DUK_STRIDX_START_RESERVED and add DUK_TOK_START_RESERVED.')
-	genc.emitLine(' */')
-	f = open(opts.out_source, 'wb')
-	f.write(genc.getString())
-	f.close()
+		# initialize lookup maps
+		self.string_to_index = {}
+		self.define_to_index = {}
+		idx = 0
+		for s, d in self.strlist:
+			self.string_to_index[s] = idx
+			self.define_to_index[d] = idx
+			idx += 1
 
-	# write C header file
-	genc = dukutil.GenerateC()
-	genc.emitHeader('genstrings.py')
-	genc.emitLine('#ifndef __DUK_STRINGS_H')
-	genc.emitLine('#define __DUK_STRINGS_H 1')
-	genc.emitLine('')
-	genc.emitLine('extern char duk_strings_data[];')  # FIXME: unsigned char?
-	genc.emitLine('')
-	genc.emitDefine('DUK_STRDATA_DATA_LENGTH', len(strdata))
-	genc.emitDefine('DUK_STRDATA_MAX_STRLEN', maxlen)
-	genc.emitLine('')
-	idx = 0
-	for s, d in strlist:
-		genc.emitDefine(d, idx, repr(s))
-		idx += 1
-	genc.emitLine('')
-	idx = 0
-	for s, d in strlist:
-		defname = d.replace('_STRIDX','_HEAP_STRING')  # FIXME
-		genc.emitDefine(defname + '(heap)', 'DUK_HEAP_GET_STRING((heap),%s)' % d)
-		defname = d.replace('_STRIDX', '_HTHREAD_STRING')
-		genc.emitDefine(defname + '(thr)', 'DUK_HTHREAD_GET_STRING((thr),%s)' % d)
-		idx += 1
-	genc.emitLine('')
-	genc.emitDefine('DUK_HEAP_NUM_STRINGS', idx)
-	genc.emitLine('')
-	genc.emitDefine('DUK_STRIDX_START_RESERVED', idx_start_reserved)
-	genc.emitDefine('DUK_STRIDX_START_STRICT_RESERVED', idx_start_strict_reserved)
-	genc.emitDefine('DUK_STRIDX_END_RESERVED', len(strlist), comment='exclusive endpoint')
-	genc.emitLine('')
-	genc.emitLine('#endif  /* __DUK_STRINGS_H */')
-	f = open(opts.out_header, 'wb')
-	f.write(genc.getString())
-	f.close()
+	def stringToIndex(self, x):
+		return self.string_to_index[x]
 
-	f.close()
+	def defineToIndex(self, x):
+		return self.define_to_index[x]
 
-	# generate Python file
-	# XXX: helper
-	f = open(opts.out_python, 'wb')
-	f.write('# automatically generated by genstrings.py, do not edit\n')
-	f.write('\n')
-	f.write('define_name_to_index = {\n')
-	idx = 0
-	for s, d in strlist:
-		f.write('\t%s: %d,\n' % (repr(d), idx))
-		idx += 1
-	f.write('}\n')
-	f.write('\n')
-	f.write('real_name_to_index = {\n')
-	idx = 0
-	for s, d in strlist:
-		f.write('\t%s: %d,\n' % (repr(s), idx))
-		idx += 1
-	f.write('}\n')
-	f.write('\n')
-	f.write('index_to_define_name = {}\n')
-	f.write('for k in define_name_to_index.keys():\n')
-	f.write('\tindex_to_define_name[define_name_to_index[k]] = k\n')
-	f.write('\n')
-	f.write('index_to_real_name = {}\n')
-	f.write('for k in real_name_to_index.keys():\n')
-	f.write('\tindex_to_real_name[real_name_to_index[k]] = k\n')
-	f.write('\n')
-	
-	f.close()
+	def hasString(self, x):
+		return self.string_to_index.has_key(x)
 
-	sys.exit(0)
+	def hasDefine(self, x):
+		return self.define_to_index.has_key(x)
 
+	def emitStringsData(self, genc):
+		genc.emitArray(self.strdata, 'duk_strings_data')  # FIXME: unsigned char?
+		genc.emitLine('')
+		genc.emitLine('/* to convert a heap stridx to a token number, subtract')
+		genc.emitLine(' * DUK_STRIDX_START_RESERVED and add DUK_TOK_START_RESERVED.')
+		genc.emitLine(' */')
+
+	def emitStringsHeader(self, genc):
+		genc.emitLine('extern char duk_strings_data[];')  # FIXME: unsigned char?
+		genc.emitLine('')
+		genc.emitDefine('DUK_STRDATA_DATA_LENGTH', len(self.strdata))
+		genc.emitDefine('DUK_STRDATA_MAX_STRLEN', self.maxlen)
+		genc.emitLine('')
+		idx = 0
+		for s, d in self.strlist:
+			genc.emitDefine(d, idx, repr(s))
+			idx += 1
+		genc.emitLine('')
+		idx = 0
+		for s, d in self.strlist:
+			defname = d.replace('_STRIDX','_HEAP_STRING')  # FIXME
+			genc.emitDefine(defname + '(heap)', 'DUK_HEAP_GET_STRING((heap),%s)' % d)
+			defname = d.replace('_STRIDX', '_HTHREAD_STRING')
+			genc.emitDefine(defname + '(thr)', 'DUK_HTHREAD_GET_STRING((thr),%s)' % d)
+			idx += 1
+		genc.emitLine('')
+		genc.emitDefine('DUK_HEAP_NUM_STRINGS', idx)
+		genc.emitLine('')
+		genc.emitDefine('DUK_STRIDX_START_RESERVED', self.idx_start_reserved)
+		genc.emitDefine('DUK_STRIDX_START_STRICT_RESERVED', self.idx_start_strict_reserved)
+		genc.emitDefine('DUK_STRIDX_END_RESERVED', len(self.strlist), comment='exclusive endpoint')
 

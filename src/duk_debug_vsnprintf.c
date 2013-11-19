@@ -85,9 +85,9 @@ static char *bc_optab[] = {
 };
 
 static char *bc_extraoptab[] = {
-	"NOP", "LDTHIS", "LDUNDEF", "LDNULL", "LDBOOL", "NEWOBJ", "NEWARR", "SETALEN", "TYPEOF", "TYPEOFID",
-	"TONUM", "INITENUM", "NEXTENUM", "INITSET", "INITGET", "ENDTRY", "ENDCATCH", "ENDFIN", "THROW", "INVLHS",
-	"XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX",
+	"NOP", "LDTHIS", "LDUNDEF", "LDNULL", "LDTRUE", "LDFALSE", "NEWOBJ", "NEWARR", "SETALEN", "TYPEOF",
+	"TYPEOFID", "TONUM", "INITENUM", "NEXTENUM", "INITSET", "INITGET", "ENDTRY", "ENDCATCH", "ENDFIN", "THROW",
+	"INVLHS", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX",
 	"XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX",
 	"XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX",
 
@@ -611,7 +611,7 @@ static void print_hbuffer(duk_dprint_state *st, duk_hbuffer *h) {
 	if (st->hexdump) {
 		duk_fb_sprintf(fb, "=[");
 		n = DUK_HBUFFER_GET_SIZE(h);
-		p = DUK_HBUFFER_GET_DATA_PTR(h);
+		p = (duk_u8 *) DUK_HBUFFER_GET_DATA_PTR(h);
 		for (i = 0; i < n; i++) {
 			duk_fb_sprintf(fb, "%02x", (int) p[i]);
 		}
@@ -767,7 +767,7 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 	const char *p_end = p + strlen(format);
 	int retval;
 	
-	memset(&fb, 0, sizeof(fb));
+	DUK_MEMSET(&fb, 0, sizeof(fb));
 	fb.buffer = (duk_u8 *) str;
 	fb.length = size;
 	fb.offset = 0;
@@ -791,7 +791,7 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 		 *  understand.  See man 3 printf.
 		 */
 
-		memset(&st, 0, sizeof(st));
+		DUK_MEMSET(&st, 0, sizeof(st));
 		st.fb = &fb;
 		st.depth = 0;
 		st.depth_limit = 1;
@@ -855,8 +855,8 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 					/* format is too large, abort */
 					goto error;
 				}
-				memset(fmtbuf, 0, sizeof(fmtbuf));
-				memcpy(fmtbuf, p_begfmt, fmtlen);
+				DUK_MEMSET(fmtbuf, 0, sizeof(fmtbuf));
+				DUK_MEMCPY(fmtbuf, p_begfmt, fmtlen);
 
 				/* assume exactly 1 arg, which is why '*' is forbidden; arg size still
 				 * depends on type though.

@@ -417,6 +417,7 @@ int duk_builtin_global_object_eval(duk_context *ctx) {
 		comp_flags |= DUK_JS_COMPILE_FLAG_STRICT;
 	}
 
+	duk_push_hstring_stridx(ctx, DUK_STRIDX_INPUT);  /* XXX: copy from caller? */
 	duk_js_compile(thr, comp_flags);
 	func = (duk_hcompiledfunction *) duk_get_hobject(ctx, -1);
 	DUK_ASSERT(func != NULL);
@@ -580,13 +581,13 @@ int duk_builtin_global_object_parse_float(duk_context *ctx) {
  */
 int duk_builtin_global_object_is_nan(duk_context *ctx) {
 	double d = duk_to_number(ctx, 0);
-	duk_push_boolean(ctx, isnan(d));
+	duk_push_boolean(ctx, DUK_ISNAN(d));
 	return 1;
 }
 
 int duk_builtin_global_object_is_finite(duk_context *ctx) {
 	double d = duk_to_number(ctx, 0);
-	duk_push_boolean(ctx, isfinite(d));
+	duk_push_boolean(ctx, DUK_ISFINITE(d));
 	return 1;
 }
 
@@ -637,7 +638,7 @@ static int print_alert_helper(duk_context *ctx, FILE *f_out) {
 	if (nargs == 1 && duk_is_buffer(ctx, 0)) {
 		const char *buf = NULL;
 		size_t sz = 0;
-		buf = duk_get_buffer(ctx, 0, &sz);
+		buf = (const char *) duk_get_buffer(ctx, 0, &sz);
 		if (buf && sz > 0) {
 			fwrite(buf, 1, sz, f_out);
 		}

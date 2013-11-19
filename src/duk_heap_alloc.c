@@ -202,7 +202,7 @@ static int init_heap_strings(duk_heap *heap) {
 	duk_bitdecoder_ctx *bd = &bd_ctx;  /* convenience */
 	int i, j;
 
-	memset(&bd_ctx, 0, sizeof(bd_ctx));
+	DUK_MEMSET(&bd_ctx, 0, sizeof(bd_ctx));
 	bd->data = (duk_u8 *) duk_strings_data;
 	bd->length = DUK_STRDATA_DATA_LENGTH;
 
@@ -285,7 +285,7 @@ static int init_heap_thread(duk_heap *heap) {
 	thr = duk_hthread_alloc(heap,
 	                        DUK_HOBJECT_FLAG_EXTENSIBLE |
 	                        DUK_HOBJECT_FLAG_THREAD |
-	                        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_OBJECT));
+	                        DUK_HOBJECT_CLASS_AS_FLAGS(DUK_HOBJECT_CLASS_THREAD));
 	if (!thr) {
 		DUK_DPRINT("failed to alloc heap_thread");
 		return 0;
@@ -305,6 +305,9 @@ static int init_heap_thread(duk_heap *heap) {
 	/* FIXME: this may now fail, and is not handled correctly */
 	duk_hthread_create_builtin_objects(thr);
 
+	/* default prototype (Note: 'thr' must be reachable) */
+	DUK_HOBJECT_SET_PROTOTYPE(thr, (duk_hobject *) thr, thr->builtins[DUK_BIDX_THREAD_PROTOTYPE]);
+
 	return 1;
 }
 
@@ -317,14 +320,39 @@ duk_heap *duk_heap_alloc(duk_alloc_function alloc_func,
 
 	DUK_DPRINT("allocate heap");
 
+#ifdef DUK_USE_COMPUTED_NAN
+	do {
+		/* Workaround for some exotic platforms where NAN is missing
+		 * and the expression (0.0 / 0.0) does NOT result in a NaN.
+		 * Such platforms use the global 'duk_computed_nan' which must
+		 * be initialized at runtime.  Use 'volatile' to ensure that
+		 * the compiler will actually do the computation and not try
+		 * to do constant folding which might result in the original
+		 * problem.
+		 */
+		volatile double dbl1 = 0.0;
+		volatile double dbl2 = 0.0;
+		duk_computed_nan = dbl1 / dbl2;
+	} while(0);
+#endif
+
+#ifdef DUK_USE_COMPUTED_INFINITY
+	do {
+		/* Similar workaround for INFINITY. */
+		volatile double dbl1 = 1.0;
+		volatile double dbl2 = 0.0;
+		duk_computed_infinity = dbl1 / dbl2;
+	} while(0);
+#endif
+
 	/* use a raw call, all macros expect the heap to be initialized */
-	res = alloc_func(alloc_udata, sizeof(duk_heap));
+	res = (duk_heap *) alloc_func(alloc_udata, sizeof(duk_heap));
 	if (!res) {
 		goto error;
 	}
 
 	/* zero everything */
-	memset(res, 0, sizeof(*res));
+	DUK_MEMSET(res, 0, sizeof(*res));
 
 	/* explicit NULL inits */
 #ifdef DUK_USE_EXPLICIT_NULL_INIT
@@ -399,7 +427,7 @@ duk_heap *duk_heap_alloc(duk_alloc_function alloc_func,
 	        }
 	}
 #else
-	memset(res->st, 0, sizeof(duk_hstring *) * DUK_STRTAB_INITIAL_SIZE);
+	DUK_MEMSET(res->st, 0, sizeof(duk_hstring *) * DUK_STRTAB_INITIAL_SIZE);
 #endif
 
 	/* strcache init */

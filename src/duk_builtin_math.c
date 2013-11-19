@@ -31,21 +31,20 @@ static int math_minmax(duk_context *ctx, double initial, two_arg_func min_max) {
 
 	/*
 	 *  Note: fmax() does not match the E5 semantics.  E5 requires
-	 *  that if -any- input to Math.max() is a NAN, the result is a
-	 *  NaN.  fmax() will return a NAN only if -both- inputs are NaN.
+	 *  that if -any- input to Math.max() is a NaN, the result is a
+	 *  NaN.  fmax() will return a NaN only if -both- inputs are NaN.
 	 *  Same applies to fmin().
 	 *
 	 *  Note: every input value must be coerced with ToNumber(), even
-	 *  if we know the result will be a NAN anyway: ToNumber() may have
+	 *  if we know the result will be a NaN anyway: ToNumber() may have
 	 *  side effects for which even order of evaluation matters.
 	 */
 
 	for (i = 0; i < n; i++) {
 		t = duk_to_number(ctx, i);
-		if (fpclassify(t) == FP_NAN || fpclassify(res) == FP_NAN) {
+		if (DUK_FPCLASSIFY(t) == DUK_FP_NAN || DUK_FPCLASSIFY(res) == DUK_FP_NAN) {
 			/* Note: not normalized, but duk_push_number() will normalize */
-			/* FIXME: best constant for NAN? */
-			res = NAN;
+			res = DUK_DOUBLE_NAN;
 		} else {
 			res = min_max(res, t);
 		}
@@ -61,7 +60,7 @@ static double fmin_fixed(double x, double y) {
 	 */
 	if (x == 0 && y == 0) {
 		/* XXX: what's the safest way of creating a negative zero? */
-		if (signbit(x) != 0 || signbit(y) != 0) {
+		if (DUK_SIGNBIT(x) != 0 || DUK_SIGNBIT(y) != 0) {
 			return -0.0;
 		} else {
 			return +0.0;
@@ -79,7 +78,7 @@ static double fmax_fixed(double x, double y) {
 	 * +0 as Ecmascript requires.
 	 */
 	if (x == 0 && y == 0) {
-		if (signbit(x) == 0 || signbit(y) == 0) {
+		if (DUK_SIGNBIT(x) == 0 || DUK_SIGNBIT(y) == 0) {
 			return +0.0;
 		} else {
 			return -0.0;
@@ -101,8 +100,8 @@ static double round_fixed(double x) {
 	 * which is incorrect for negative values.  Here we make do with floor().
 	 */
 
-	int c = fpclassify(x);
-	if (c == FP_NAN || c == FP_INFINITE || c == FP_ZERO) {
+	int c = DUK_FPCLASSIFY(x);
+	if (c == DUK_FP_NAN || c == DUK_FP_INFINITE || c == DUK_FP_ZERO) {
 		return x;
 	}
 
@@ -142,19 +141,19 @@ static double pow_fixed(double x, double y) {
 
 	int cy;
 
-	cy = fpclassify(y);
+	cy = DUK_FPCLASSIFY(y);
 
-	if (cy == FP_NAN) {
+	if (cy == DUK_FP_NAN) {
 		goto ret_nan;
 	}
-	if (fabs(x) == 1.0 && cy == FP_INFINITE) {
+	if (fabs(x) == 1.0 && cy == DUK_FP_INFINITE) {
 		goto ret_nan;
 	}
 
 	return pow(x, y);
 
  ret_nan:
-	return NAN;
+	return DUK_DOUBLE_NAN;
 }
 
 int duk_builtin_math_object_abs(duk_context *ctx) {
@@ -198,13 +197,11 @@ int duk_builtin_math_object_log(duk_context *ctx) {
 }
 
 int duk_builtin_math_object_max(duk_context *ctx) {
-	/* FIXME: compile warning here on gcc-4.0, floating constant exceeds range of 'float' */
-	return math_minmax(ctx, -((double) INFINITY), fmax_fixed);
+	return math_minmax(ctx, -DUK_DOUBLE_INFINITY, fmax_fixed);
 }
 
 int duk_builtin_math_object_min(duk_context *ctx) {
-	/* FIXME: compile warning here on gcc-4.0, floating constant exceeds range of 'float' */
-	return math_minmax(ctx, (double) INFINITY, fmin_fixed);
+	return math_minmax(ctx, DUK_DOUBLE_INFINITY, fmin_fixed);
 }
 
 int duk_builtin_math_object_pow(duk_context *ctx) {

@@ -145,7 +145,7 @@ int duk_builtin_string_prototype_char_code_at(duk_context *ctx) {
 	                             DUK_HSTRING_GET_CHARLEN(h) - 1 /*max(incl*/,
 	                             &clamped /*clamped*/);
 	if (clamped) {
-		duk_push_number(ctx, NAN);  /* FIXME: best constant for NAN? */
+		duk_push_number(ctx, DUK_DOUBLE_NAN);
 		return 1;
 	}
 
@@ -401,7 +401,7 @@ static int string_indexof_helper(duk_context *ctx, int is_lastindexof) {
 
 		if ((t == firstbyte) && ((p_end - p) >= q_blen)) {
 			DUK_ASSERT(q_blen > 0);  /* no issues with memcmp() zero size, even if broken */
-			if (memcmp(p, q_start, q_blen) == 0) {
+			if (DUK_MEMCMP(p, q_start, q_blen) == 0) {
 				duk_push_int(ctx, cpos);
 				return 1;
 			}
@@ -602,11 +602,8 @@ int duk_builtin_string_prototype_replace(duk_context *ctx) {
 			match_start_coff = 0;
 
 			while (p <= p_end) {
-				/* FIXME: wrapped utility memcmp() which is guaranteed to work
-				 * even if byte count is zero?
-				 */
 				DUK_ASSERT(p + q_blen <= DUK_HSTRING_GET_DATA(h_input) + DUK_HSTRING_GET_BYTELEN(h_input));
-				if (memcmp((void *) p, (void *) q_start, (size_t) q_blen) == 0) {
+				if (DUK_MEMCMP((void *) p, (void *) q_start, (size_t) q_blen) == 0) {
 					duk_dup(ctx, 0);
 					h_match = duk_get_hstring(ctx, -1);
 					DUK_ASSERT(h_match != NULL);
@@ -883,7 +880,7 @@ int duk_builtin_string_prototype_split(duk_context *ctx) {
 		if (is_regexp) {
 			duk_dup(ctx, 0);
 			duk_dup(ctx, 2);
-			duk_regexp_match_force_global(ctx);  /* [ ... regexp input ] -> [ res_obj ] */
+			duk_regexp_match_force_global(thr);  /* [ ... regexp input ] -> [ res_obj ] */
 			if (!duk_is_object(ctx, -1)) {
 				duk_pop(ctx);
 				break;
@@ -960,7 +957,7 @@ int duk_builtin_string_prototype_split(duk_context *ctx) {
 			while (p <= p_end) {
 				DUK_ASSERT(p + q_blen <= DUK_HSTRING_GET_DATA(h_input) + DUK_HSTRING_GET_BYTELEN(h_input));
 				DUK_ASSERT(q_blen > 0);  /* no issues with empty memcmp() */
-				if (memcmp((void *) p, (void *) q_start, (size_t) q_blen) == 0) {
+				if (DUK_MEMCMP((void *) p, (void *) q_start, (size_t) q_blen) == 0) {
 					/* never an empty match, so step 13.c.iii can't be triggered */
 					goto found;
 				}
@@ -1254,6 +1251,7 @@ int duk_builtin_string_prototype_locale_compare(duk_context *ctx) {
 	h2_len = DUK_HSTRING_GET_BYTELEN(h2);
 	prefix_len = (h1_len <= h2_len ? h1_len : h2_len);
 
+	/* FIXME: this special case can be removed now with DUK_MEMCMP */
 	/* memcmp() should return zero (equal) for zero length, but avoid
 	 * it because there are some platform specific bugs.  Don't use
 	 * strncmp() because it stops comparing at a NUL.
@@ -1263,9 +1261,9 @@ int duk_builtin_string_prototype_locale_compare(duk_context *ctx) {
 		rc = 0;
 		goto skip_memcmp;
 	}
-	rc = memcmp((const char *) DUK_HSTRING_GET_DATA(h1),
-	            (const char *) DUK_HSTRING_GET_DATA(h2),
-	            prefix_len);
+	rc = DUK_MEMCMP((const char *) DUK_HSTRING_GET_DATA(h1),
+	                (const char *) DUK_HSTRING_GET_DATA(h2),
+	                prefix_len);
  skip_memcmp:
 
 	if (rc < 0) {

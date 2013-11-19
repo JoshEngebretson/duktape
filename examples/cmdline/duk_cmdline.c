@@ -1,31 +1,45 @@
 /*
- *  Command line execution tool.
+ *  Command line execution tool.  Used by test cases and other manual testing.
  *
- *  Needed for test cases and other manual testing.
+ *  For maximum portability, compile with -DDUK_CMDLINE_BAREBONES
  */
+
+#ifdef DUK_CMDLINE_BAREBONES
+#define NO_READLINE
+#define NO_RLIMIT
+#define NO_SIGNAL
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#ifndef NO_SIGNAL
 #include <signal.h>
-#include <sys/time.h>
+#endif
+#ifndef NO_RLIMIT
 #include <sys/resource.h>
-
+#endif
+#ifndef NO_READLINE
 #include <readline/readline.h>
 #include <readline/history.h>
+#endif
 
 #include "duktape.h"
 
 #define  MEM_LIMIT_NORMAL   (128*1024*1024)   /* 128 MB */
 #define  MEM_LIMIT_HIGH     (2047*1024*1024)  /* ~2 GB */
+#define  LINEBUF_SIZE       65536
 
+/* FIXME: additional modules should probably only be in some separate tool? */
+#if 0
 extern void duk_ncurses_register(duk_context *ctx);
 extern void duk_socket_register(duk_context *ctx);
 extern void duk_fileio_register(duk_context *ctx);
+#endif
 
 int interactive_mode = 0;
 
+#ifndef NO_RLIMIT
 static void set_resource_limits(rlim_t mem_limit_value) {
 	int rc;
 	struct rlimit lim;
@@ -54,13 +68,37 @@ static void set_resource_limits(rlim_t mem_limit_value) {
 	fprintf(stderr, "Set RLIMIT_AS to %d\n", (int) mem_limit_value);
 #endif
 }
+#endif  /* NO_RLIMIT */
 
+#ifndef NO_SIGNAL
 static void my_sighandler(int x) {
 	fprintf(stderr, "Got signal %d\n", x);
 	
 }
 static void set_sigint_handler(void) {
 	(void) signal(SIGINT, my_sighandler);
+}
+#endif  /* NO_SIGNAL */
+
+/* Print error to stderr and pop error. */
+static void print_error(duk_context *ctx, FILE *f) {
+	if (duk_is_object(ctx, -1) && duk_has_prop_string(ctx, -1, "stack")) {
+		/* FIXME: print error objects specially */
+		/* FIXME: pcall the string coercion */
+		duk_get_prop_string(ctx, -1, "stack");
+		if (duk_is_string(ctx, -1)) {
+			fprintf(f, "%s\n", duk_get_string(ctx, -1));
+			fflush(f);
+			duk_pop_2(ctx);
+			return;
+		} else {
+			duk_pop(ctx);
+		}
+	}
+	duk_to_string(ctx, -1);
+	fprintf(f, "%s\n", duk_get_string(ctx, -1));
+	fflush(f);
+	duk_pop(ctx);
 }
 
 int wrapped_compile_execute(duk_context *ctx) {
@@ -93,16 +131,18 @@ int wrapped_compile_execute(duk_context *ctx) {
         duk_to_string(ctx, -1);
 
 	if (interactive_mode) {
-		/* FIXME: in interactive mode, write to stdout? */
+		/* In interactive mode, write to stdout so output won't interleave as easily. */
 		fprintf(stdout, "= %s\n", duk_get_string(ctx, -1));
 		fflush(stdout);
+	} else {
+		/* In non-interactive mode, success results are not written at all. */
 	}
 
         duk_pop(ctx);
 	return 0;
 }
 
-int handle_fh(duk_context *ctx, FILE *f) {
+int handle_fh(duk_context *ctx, FILE *f, const char *filename) {
 	char *buf = NULL;
 	int len;
 	int got;
@@ -124,23 +164,21 @@ int handle_fh(duk_context *ctx, FILE *f) {
 	got = fread((void *) buf, (size_t) 1, (size_t) len, f);
 
 	duk_push_lstring(ctx, buf, got);
+	duk_push_string(ctx, filename);
 
 	free(buf);
 	buf = NULL;
 
 	interactive_mode = 0;  /* global */
 
-	rc = duk_safe_call(ctx, wrapped_compile_execute, 1 /*nargs*/, 1 /*nret*/, DUK_INVALID_INDEX);
+	rc = duk_safe_call(ctx, wrapped_compile_execute, 2 /*nargs*/, 1 /*nret*/, DUK_INVALID_INDEX);
 	if (rc != DUK_EXEC_SUCCESS) {
-		duk_to_string(ctx, -1);
-		fprintf(stderr, "Error: %s (rc=%d)\n", duk_get_string(ctx, -1), rc);
-		fflush(stderr);
-		duk_pop(ctx);
+		print_error(ctx, stderr);
 		goto error;
+	} else {
+		duk_pop(ctx);
+		retval = 0;
 	}
-
-	duk_pop(ctx);
-	retval = 0;
 	/* fall thru */
 
  error:
@@ -161,7 +199,7 @@ int handle_file(duk_context *ctx, const char *filename) {
 		goto error;
 	}
 
-	retval = handle_fh(ctx, f);
+	retval = handle_fh(ctx, f, filename);
 
 	fclose(f);
 	return retval;
@@ -173,11 +211,77 @@ int handle_file(duk_context *ctx, const char *filename) {
 int handle_stdin(duk_context *ctx) {
 	int retval;
 
-	retval = handle_fh(ctx, stdin);
+	retval = handle_fh(ctx, stdin, "stdin");
 
 	return retval;
 }
 
+#ifdef NO_READLINE
+int handle_interactive(duk_context *ctx) {
+	const char *prompt = "duk> ";
+	char *buffer = NULL;
+	int retval = 0;
+	int got_eof = 0;
+	int rc;
+
+	duk_eval_string(ctx, "print('((o) Duktape [no readline]'); print(__duk__.build);");
+	duk_pop(ctx);
+
+	buffer = malloc(LINEBUF_SIZE);
+	if (!buffer) {
+		fprintf(stderr, "failed to allocated a line buffer\n");
+		fflush(stderr);
+		retval = -1;
+		goto done;
+	}
+
+	for (;;) {
+		size_t idx = 0;
+
+		fwrite(prompt, 1, strlen(prompt), stdout);
+		fflush(stdout);
+
+		for (;;) {
+			int c = fgetc(stdin);
+			if (c == EOF) {
+				got_eof = 1;
+				break;
+			} else if (c == '\n') {
+				break;
+			} else if (idx >= LINEBUF_SIZE) {
+				fprintf(stderr, "line too long\n");
+				fflush(stderr);
+				retval = -1;
+				goto done;
+			} else {
+				buffer[idx++] = (char) c;
+			}
+		}
+
+		duk_push_lstring(ctx, buffer, idx);
+		duk_push_string(ctx, "input");
+
+		interactive_mode = 1;  /* global */
+
+		rc = duk_safe_call(ctx, wrapped_compile_execute, 2 /*nargs*/, 1 /*nret*/, DUK_INVALID_INDEX);
+		if (rc != DUK_EXEC_SUCCESS) {
+			/* in interactive mode, write to stdout */
+			print_error(ctx, stdout);
+			retval = -1;  /* an error 'taints' the execution */
+		} else {
+			duk_pop(ctx);
+		}
+	}
+
+ done:
+	if (buffer) {
+		free(buffer);
+		buffer = NULL;
+	}
+
+	return retval;
+}
+#else
 int handle_interactive(duk_context *ctx) {
 	const char *prompt = "duk> ";
 	char *buffer = NULL;
@@ -211,6 +315,7 @@ int handle_interactive(duk_context *ctx) {
 		}
 
 		duk_push_lstring(ctx, buffer, strlen(buffer));
+		duk_push_string(ctx, "input");
 
 		if (buffer) {
 			free(buffer);
@@ -219,17 +324,14 @@ int handle_interactive(duk_context *ctx) {
 
 		interactive_mode = 1;  /* global */
 
-		rc = duk_safe_call(ctx, wrapped_compile_execute, 1 /*nargs*/, 1 /*nret*/, DUK_INVALID_INDEX);
+		rc = duk_safe_call(ctx, wrapped_compile_execute, 2 /*nargs*/, 1 /*nret*/, DUK_INVALID_INDEX);
 		if (rc != DUK_EXEC_SUCCESS) {
-			duk_to_string(ctx, -1);
-
 			/* in interactive mode, write to stdout */
-			fprintf(stdout, "Error: %s (rc=%d) [ignored]\n", duk_get_string(ctx, -1), rc);
-			fflush(stdout);
+			print_error(ctx, stdout);
 			retval = -1;  /* an error 'taints' the execution */
+		} else {
+			duk_pop(ctx);
 		}
-
-		duk_pop(ctx);
 	}
 
 	if (buffer) {
@@ -239,6 +341,7 @@ int handle_interactive(duk_context *ctx) {
 
 	return retval;
 }
+#endif  /* NO_READLINE */
 
 int main(int argc, char *argv[]) {
 	duk_context *ctx = NULL;
@@ -248,10 +351,12 @@ int main(int argc, char *argv[]) {
 	int memlimit_high = 0;
 	int i;
 
+#ifndef NO_SIGNAL
 	set_sigint_handler();
 
 	/* This is useful at the global level; libraries should avoid SIGPIPE though */
 	/*signal(SIGPIPE, SIG_IGN);*/
+#endif
 
 	for (i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -273,13 +378,17 @@ int main(int argc, char *argv[]) {
 		interactive = 1;
 	}
 
+#ifndef NO_RLIMIT
 	set_resource_limits(memlimit_high ? MEM_LIMIT_HIGH : MEM_LIMIT_NORMAL);
+#endif
 
 	ctx = duk_create_heap_default();
 
+#if 0
 	duk_ncurses_register(ctx);
 	duk_socket_register(ctx);
 	duk_fileio_register(ctx);
+#endif
 
 	if (filename) {
 		if (strcmp(filename, "-") == 0) {

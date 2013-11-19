@@ -376,7 +376,7 @@ static void realloc_props(duk_hthread *thr,
 		 * allocation later.
 		 */
 
-		new_p = duk_push_dynamic_buffer(ctx, new_alloc_size);  /* errors out if out of memory */
+		new_p = (duk_u8 *) duk_push_dynamic_buffer(ctx, new_alloc_size);  /* errors out if out of memory */
 		DUK_ASSERT(new_p != NULL);  /* since new_alloc_size > 0 */
 	}
 
@@ -511,7 +511,7 @@ static void realloc_props(duk_hthread *thr,
 		if (obj->a_size > 0) {
 			/* avoid zero copy; if a_size == 0, obj->p might be NULL */
 			DUK_ASSERT(obj->p != NULL);
-			memcpy((void *) new_a, (void *) DUK_HOBJECT_A_GET_BASE(obj), sizeof(duk_tval) * obj->a_size);
+			DUK_MEMCPY((void *) new_a, (void *) DUK_HOBJECT_A_GET_BASE(obj), sizeof(duk_tval) * obj->a_size);
 		}
 
 		/* fill new entries with -unused- (required, gc reachable) */
@@ -536,7 +536,7 @@ static void realloc_props(duk_hthread *thr,
 			/* avoid zero copy; if new_a_size == obj->a_size == 0, obj->p might be NULL */
 			DUK_ASSERT(obj->a_size > 0);
 			DUK_ASSERT(obj->p != NULL);
-			memcpy((void *) new_a, (void *) DUK_HOBJECT_A_GET_BASE(obj), sizeof(duk_tval) * new_a_size);
+			DUK_MEMCPY((void *) new_a, (void *) DUK_HOBJECT_A_GET_BASE(obj), sizeof(duk_tval) * new_a_size);
 		}
 	}
 
@@ -552,7 +552,7 @@ static void realloc_props(duk_hthread *thr,
 		DUK_ASSERT(new_h != NULL);
 
 		/* fill new_h with u32 0xff = UNUSED */
-		memset(new_h, 0xff, sizeof(duk_u32) * new_h_size);
+		DUK_MEMSET(new_h, 0xff, sizeof(duk_u32) * new_h_size);
 
 		DUK_ASSERT(new_e_used <= new_h_size);  /* equality not actually possible */
 		for (i = 0; i < new_e_used; i++) {
@@ -1664,11 +1664,7 @@ int duk_hobject_getprop(duk_hthread *thr, duk_tval *tv_obj, duk_tval *tv_key) {
 
 	switch (DUK_TVAL_GET_TAG(tv_obj)) {
 	case DUK_TAG_UNDEFINED:
-	case DUK_TAG_NULL:
-	case DUK_TAG_BUFFER:
-	case DUK_TAG_POINTER: {
-		/* FIXME: add a prototype object for buffers and perhaps for pointers? */
-
+	case DUK_TAG_NULL: {
 		/* Note: unconditional throw */
 		DUK_DDDPRINT("base object is undefined, null, buffer, or pointer -> reject");
 		DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "invalid base reference for property read");
@@ -1774,6 +1770,19 @@ int duk_hobject_getprop(duk_hthread *thr, duk_tval *tv_obj, duk_tval *tv_key) {
 
 			goto lookup;  /* avoid double coercion */
 		}
+		break;
+	}
+
+	/* Buffer doesn't have virtual properties at the moment (indices or length). */
+	case DUK_TAG_BUFFER: {
+		DUK_DDDPRINT("base object is a buffer, start lookup from buffer prototype");
+		curr = thr->builtins[DUK_BIDX_BUFFER_PROTOTYPE];
+		break;
+	}
+
+	case DUK_TAG_POINTER: {
+		DUK_DDDPRINT("base object is a pointer, start lookup from pointer prototype");
+		curr = thr->builtins[DUK_BIDX_POINTER_PROTOTYPE];
 		break;
 	}
 
@@ -3134,8 +3143,9 @@ int duk_hobject_delprop(duk_hthread *thr, duk_tval *tv_obj, duk_tval *tv_key, in
 /*
  *  Internal helper to define a property with specific flags, ignoring
  *  normal semantics such as extensibility, write protection etc.
- *  Overwrites any existing value and attributes.  If target has an array
- *  part, asserts that propflags are correct (WEC).
+ *  Overwrites any existing value and attributes unless caller requests
+ *  that value only be updated if it doesn't already exists.  If target
+ *  has an array part, asserts that propflags are correct (WEC).
  *
  *  Does not support:
  *    - virtual properties
@@ -3148,7 +3158,7 @@ int duk_hobject_delprop(duk_hthread *thr, duk_tval *tv_obj, duk_tval *tv_key, in
  *  operations.
  */
 
-void duk_hobject_define_property_internal(duk_hthread *thr, duk_hobject *obj, duk_hstring *key, int propflags) {
+void duk_hobject_define_property_internal(duk_hthread *thr, duk_hobject *obj, duk_hstring *key, int flags) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_propdesc desc;
 	duk_u32 arr_idx;
@@ -3156,15 +3166,15 @@ void duk_hobject_define_property_internal(duk_hthread *thr, duk_hobject *obj, du
 	duk_tval tv_tmp;
 	duk_tval *tv1 = NULL;
 	duk_tval *tv2 = NULL;
+	int propflags = flags & DUK_PROPDESC_FLAGS_MASK;  /* mask out flags not actually stored */
 
 	DUK_DDDPRINT("define new property (internal): thr=%p, obj=%!O, key=%!O, flags=0x%02x, val=%!T",
-	             (void *) thr, obj, key, propflags, duk_get_tval(ctx, -1));
+	             (void *) thr, obj, key, flags, duk_get_tval(ctx, -1));
 
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(thr->heap != NULL);
 	DUK_ASSERT(obj != NULL);
 	DUK_ASSERT(key != NULL);
-	DUK_ASSERT((propflags & ~DUK_PROPDESC_FLAGS_MASK) == 0);
 
 	ASSERT_VALSTACK_SPACE(thr, VALSTACK_SPACE);
 	DUK_ASSERT(duk_is_valid_index(ctx, -1));  /* contains value */
@@ -3173,17 +3183,29 @@ void duk_hobject_define_property_internal(duk_hthread *thr, duk_hobject *obj, du
 
 	if (get_own_property_desc_raw(thr, obj, key, arr_idx, &desc, 0)) {  /* push_value = 0 */
 		if (desc.e_idx >= 0) {
+			if (flags & DUK_PROPDESC_FLAG_NO_OVERWRITE) {
+				DUK_DDDPRINT("property already exists in the entry part -> skip as requested");
+				goto skip_write;
+			}
 			DUK_DDDPRINT("property already exists in the entry part -> update value and attributes");
 			DUK_ASSERT(!DUK_HOBJECT_E_SLOT_IS_ACCESSOR(obj, desc.e_idx));
 
 			DUK_HOBJECT_E_SET_FLAGS(obj, desc.e_idx, propflags);
 			tv1 = DUK_HOBJECT_E_GET_VALUE_TVAL_PTR(obj, desc.e_idx);
 		} else if (desc.a_idx >= 0) {
+			if (flags & DUK_PROPDESC_FLAG_NO_OVERWRITE) {
+				DUK_DDDPRINT("property already exists in the array part -> skip as requested");
+				goto skip_write;
+			}
 			DUK_DDDPRINT("property already exists in the array part -> update value (assert attributes)");
 			DUK_ASSERT(propflags == DUK_PROPDESC_FLAGS_WEC);
 
 			tv1 = DUK_HOBJECT_A_GET_VALUE_PTR(obj, desc.a_idx);
 		} else {
+			if (flags & DUK_PROPDESC_FLAG_NO_OVERWRITE) {
+				DUK_DDDPRINT("property already exists but is virtual -> skip as requested");
+				goto skip_write;
+			}
 			DUK_DDDPRINT("property already exists but is virtual -> failure");
 			DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "attempt to redefine virtual property");
 			DUK_NEVER_HERE();
@@ -3228,7 +3250,48 @@ void duk_hobject_define_property_internal(duk_hthread *thr, duk_hobject *obj, du
 	DUK_TVAL_INCREF(thr, tv1);
 	DUK_TVAL_DECREF(thr, &tv_tmp);    /* side effects */
 
+ skip_write:
 	duk_pop(ctx);  /* remove in_val */
+}
+
+/*
+ *  Internal helper for defining an accessor property, ignoring
+ *  normal semantics such as extensibility, write protection etc.
+ *  Overwrites any existing value and attributes.  This is called
+ *  very rarely, so the implementation first sets a value to undefined
+ *  and then changes the entry to an accessor (this is to save code space).
+ */
+
+void duk_hobject_define_accessor_internal(duk_hthread *thr, duk_hobject *obj, duk_hstring *key, duk_hobject *getter, duk_hobject *setter, int propflags) {
+	duk_context *ctx = (duk_context *) thr;
+	int e_idx;
+	int h_idx;
+
+	DUK_DDDPRINT("define new accessor (internal): thr=%p, obj=%!O, key=%!O, getter=%!O, setter=%!O, flags=0x%02x",
+	             (void *) thr, obj, key, getter, setter, propflags);
+
+	DUK_ASSERT(thr != NULL);
+	DUK_ASSERT(thr->heap != NULL);
+	DUK_ASSERT(obj != NULL);
+	DUK_ASSERT(key != NULL);
+	DUK_ASSERT((propflags & ~DUK_PROPDESC_FLAGS_MASK) == 0);
+	/* setter and/or getter may be NULL */
+
+	ASSERT_VALSTACK_SPACE(thr, VALSTACK_SPACE);
+
+	/* force the property to 'undefined' to create a slot for it */
+	duk_push_undefined(ctx);
+	duk_hobject_define_property_internal(thr, obj, key, propflags);
+	duk_hobject_find_existing_entry(obj, key, &e_idx, &h_idx);
+	DUK_DDDPRINT("accessor slot: e_idx=%d, h_idx=%d", e_idx, h_idx);
+	DUK_ASSERT(e_idx >= 0 && e_idx < obj->e_used);
+
+	/* no need to decref, as previous value is 'undefined' */
+	DUK_HOBJECT_E_SLOT_SET_ACCESSOR(obj, e_idx);
+	DUK_HOBJECT_E_SET_VALUE_GETTER(obj, e_idx, getter);
+	DUK_HOBJECT_E_SET_VALUE_SETTER(obj, e_idx, setter);
+	DUK_HOBJECT_INCREF(thr, getter);
+	DUK_HOBJECT_INCREF(thr, setter);
 }
 
 /*

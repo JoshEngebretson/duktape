@@ -362,7 +362,7 @@ static void internbuffer(duk_lexer_ctx *lex_ctx, int valstack_idx) {
 void duk_lexer_initctx(duk_lexer_ctx *lex_ctx) {
 	DUK_ASSERT(lex_ctx != NULL);
 
-	memset(lex_ctx, 0, sizeof(*lex_ctx));
+	DUK_MEMSET(lex_ctx, 0, sizeof(*lex_ctx));
 #ifdef DUK_USE_EXPLICIT_NULL_INIT
 	lex_ctx->thr = NULL;
 	lex_ctx->input = NULL;
@@ -515,7 +515,7 @@ static void parse_input_element_raw(duk_lexer_ctx *lex_ctx,
 
 	out_token->t = DUK_TOK_EOF;
 	out_token->t_nores = -1;	/* marker: copy t if not changed */
-	out_token->num = NAN;
+	out_token->num = DUK_DOUBLE_NAN;
 	out_token->str1 = NULL;
 	out_token->str2 = NULL;
 	out_token->num_escapes = 0;
@@ -1068,7 +1068,7 @@ static void parse_input_element_raw(duk_lexer_ctx *lex_ctx,
 		duk_dup((duk_context *) lex_ctx->thr, lex_ctx->slot1_idx);
 		duk_numconv_parse((duk_context *) lex_ctx->thr, 10 /*radix*/, s2n_flags);
 		val = duk_to_number((duk_context *) lex_ctx->thr, -1);
-		if (isnan(val)) {
+		if (DUK_ISNAN(val)) {
 			DUK_ERROR(lex_ctx->thr, DUK_ERR_SYNTAX_ERROR, "invalid numeric literal");
 		}
 		duk_replace((duk_context *) lex_ctx->thr, lex_ctx->slot1_idx);  /* FIXME: or pop? */
@@ -1315,7 +1315,7 @@ void duk_lexer_parse_re_token(duk_lexer_ctx *lex_ctx, duk_re_token *out_token) {
 	int advtok = 0;  /* init is unnecessary but suppresses "may be used uninitialized" warnings */
 	int x, y;
 
-	memset(out_token, 0, sizeof(*out_token));
+	DUK_MEMSET(out_token, 0, sizeof(*out_token));
 
 	x = L0();
 	y = L1();

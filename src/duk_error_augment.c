@@ -7,7 +7,8 @@
  *
  *  Ecmascript allows throwing any values, so all values cannot be
  *  augmented.  Currently, we only augment error values which are Error
- *  instances and are also extensible.
+ *  instances (= have the built-in Error.prototype in their prototype
+ *  chain) and are also extensible.
  */
 
 #include "duk_internal.h"
@@ -15,7 +16,7 @@
 #ifdef DUK_USE_AUGMENT_ERRORS
 
 #ifdef DUK_USE_TRACEBACKS
-static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobject *obj, int err_index) {
+static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobject *obj, int err_index, const char *filename, int line) {
 	duk_context *ctx = (duk_context *) thr;
 	int depth;
 	int i, i_min;
@@ -30,7 +31,7 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 	/*
 	 *  The traceback format is pretty arcane in an attempt to keep it compact
 	 *  and cheap to create.  It may change arbitrarily from version to version.
-	 *  It should be decoded/accessed through version specific accessors.
+	 *  It should be decoded/accessed through version specific accessors only.
 	 *
 	 *  See doc/error-objects.txt.
 	 */
@@ -38,20 +39,37 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 	DUK_DDDPRINT("adding traceback to object: %!O", (duk_heaphdr *) obj);
 
 	duk_push_array(ctx);  /* XXX: specify array size, as we know it */
+	arr_idx = 0;
 
+	/* filename/line from C macros (__FILE__, __LINE__) are added as an
+	 * entry with a special format: (string, number)
+	 */
+	if (filename) {
+		duk_push_string(ctx, filename);
+		duk_put_prop_index(ctx, -2, arr_idx);
+		arr_idx++;
+		duk_push_int(ctx, line);
+		duk_put_prop_index(ctx, -2, arr_idx);
+		arr_idx++;
+	}
+
+	/* traceback depth doesn't take into account the filename/line
+	 * special handling above (intentional)
+	 */
 	depth = DUK_OPT_TRACEBACK_DEPTH;
 	i_min = (thr_callstack->callstack_top > depth ? thr_callstack->callstack_top - depth : 0);
 	DUK_ASSERT(i_min >= 0);
-	arr_idx = 0;
 
 	for (i = thr_callstack->callstack_top - 1; i >= i_min; i--) {
 		double d;
+		int pc;
 
 		/*
 		 *  Note: each API operation potentially resizes the callstack,
 		 *  so be careful to re-lookup after every operation.  Currently
 		 *  these is no issue because we don't store a temporary 'act'
-		 *  pointer at all.
+		 *  pointer at all.  (This would be a non-issue if we operated
+		 *  directly on the array part.)
 		 */
 
 		/* [... arr] */
@@ -65,30 +83,33 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 		arr_idx++;
 
 		/* add a number containing: pc, activation flags */
-		d = ((double) thr_callstack->callstack[i].flags) * DUK_DOUBLE_2TO32 +  /* assume PC is at most 32 bits and non-negative */
-		    (double) thr_callstack->callstack[i].pc;
+		pc = thr_callstack->callstack[i].pc;
+#if 0
+		/* FIXME: this is not the case always now */
+		pc--;  /* PC points to next instruction, find offending PC; note that
+		        * PC == 0 should never be possible for an error.
+		        */
+#endif
+		DUK_ASSERT(pc >= 0 && (double) pc < DUK_DOUBLE_2TO32);  /* assume PC is at most 32 bits and non-negative */
+		d = ((double) thr_callstack->callstack[i].flags) * DUK_DOUBLE_2TO32 + (double) pc;
 		duk_push_number(ctx, d);  /* -> [... arr num] */
 		duk_put_prop_index(ctx, -2, arr_idx);
 		arr_idx++;
-
-		/* FIXME: some more features to record (somehow):
-		 *   - current this binding?
-		 */
-
-		/* FIXME: efficient array pushing, e.g. preallocate array, write DIRECTLY to array entries, etc. */
 	}
 
 	/* [... arr] */
-	duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_TRACEBACK);  /* -> [...] */
+	duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_TRACEDATA);  /* -> [...] */
 }
 #endif  /* DUK_USE_TRACEBACKS */
 
 /*
+ *  Augment an error with tracedata, fileName, lineNumber, etc.
+ *
  *  thr: thread containing the error value
  *  thr_callstack: thread which should be used for generating callstack etc.
  */
 
-void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err_index) {
+void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err_index, const char *filename, int line) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_hobject *obj;
 
@@ -123,66 +144,86 @@ void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err
 
 	/* Yes, augment error. */
 
-	/* FIXME: here we'd like to have a variant of "duk_def_prop_stridx" which
-	 * would refuse to add a property if it already exists to avoid any issues
-	 * with protected properties.
+#ifdef DUK_USE_TRACEBACKS
+	/*
+	 *  If tracebacks are enabled, the 'tracedata' property is the only
+	 *  thing we need: 'fileName' and 'lineNumber' are virtual properties
+	 *  which use 'tracedata'.
 	 */
 
-#ifdef DUK_USE_TRACEBACKS
-	if (duk_hobject_hasprop_raw(thr, obj, DUK_HTHREAD_STRING_TRACEBACK(thr))) {
+	if (duk_hobject_hasprop_raw(thr, obj, DUK_HTHREAD_STRING_TRACEDATA(thr))) {
 		DUK_DDDPRINT("error value already has a 'traceback' property, not modifying it");
 	} else {
-		add_traceback(thr, thr_callstack, obj, err_index);
+		add_traceback(thr, thr_callstack, obj, err_index, filename, line);
 	}
-#endif  /* DUK_USE_TRACEBACKS */
+#else
+	/*
+	 *  If tracebacks are disabled, 'fileName' and 'lineNumber' are added
+	 *  as plain own properties.  Since Error.prototype has accessors of
+	 *  the same name, we need to define own properties directly (cannot
+	 *  just use e.g. duk_put_prop_stridx).  Existing properties are not
+	 *  overwritten in case they already exist.
+	 */
 
-	if (thr_callstack->callstack_top > 0) {
+	if (filename) {
+		/* XXX: __FILE__/__LINE__ may not always be the most relevant,
+		 * see comments in traceback formatting.  Further these are
+		 * not currently set in minimal builds anyway, so disable?
+		 */
+		duk_push_string(ctx, filename);
+		duk_def_prop_stridx(ctx, err_index, DUK_STRIDX_FILE_NAME, DUK_PROPDESC_FLAGS_WC | DUK_PROPDESC_FLAG_NO_OVERWRITE);
+		duk_push_int(ctx, line);
+		duk_def_prop_stridx(ctx, err_index, DUK_STRIDX_LINE_NUMBER, DUK_PROPDESC_FLAGS_WC | DUK_PROPDESC_FLAG_NO_OVERWRITE);
+	} else if (thr_callstack->callstack_top > 0) {
 		duk_activation *act;
 		duk_hobject *func;
 		duk_hbuffer *pc2line;
 
 		act = thr_callstack->callstack + thr_callstack->callstack_top - 1;
+		DUK_ASSERT(act >= thr_callstack->callstack && act < thr_callstack->callstack + thr_callstack->callstack_size);
 		func = act->func;
 		if (func) {
-			int pc = act->pc;
+			int pc;
 			duk_u32 line;
-			act = NULL;  /* invalidated by pushes */
 
-			pc--;  /* PC points to next instruction, find offending PC */
+			pc = act->pc;
+#if 0
+			/* FIXME: this is not the case always now */
+			pc--;  /* PC points to next instruction, find offending PC; note that
+			        * PC == 0 should never be possible for an error.
+			        */
+#endif
+			DUK_ASSERT(pc >= 0 && (double) pc < DUK_DOUBLE_2TO32);  /* assume PC is at most 32 bits and non-negative */
+			act = NULL;  /* invalidated by pushes, so get out of the way */
 
 			duk_push_hobject(ctx, func);
 
-			/* FIXME: now set function name as filename; record function and file name
-			 * separately?  Function object is already in traceback though.
-			 */
-			duk_get_prop_stridx(ctx, -1, DUK_STRIDX_NAME);
-			duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_FILE_NAME);
-
+			duk_get_prop_stridx(ctx, -1, DUK_STRIDX_FILE_NAME);
+			duk_def_prop_stridx(ctx, err_index, DUK_STRIDX_FILE_NAME, DUK_PROPDESC_FLAGS_WC | DUK_PROPDESC_FLAG_NO_OVERWRITE);
 			if (DUK_HOBJECT_IS_COMPILEDFUNCTION(func)) {
-				duk_push_false(ctx);
-				duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_IS_NATIVE);
-
-				/* FIXME: add PC only if pc2line fails? */
+#if 0
 				duk_push_number(ctx, pc);
-				duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_PC);
+				duk_def_prop_stridx(ctx, err_index, DUK_STRIDX_PC, DUK_PROPDESC_FLAGS_WC | DUK_PROPDESC_FLAGS_NO_OVERWRITE);
+#endif
 
 				duk_get_prop_stridx(ctx, -1, DUK_STRIDX_INT_PC2LINE);
 				if (duk_is_buffer(ctx, -1)) {
 					pc2line = duk_get_hbuffer(ctx, -1);
+					DUK_ASSERT(pc2line != NULL);
 					DUK_ASSERT(!DUK_HBUFFER_HAS_DYNAMIC(pc2line));
 					line = duk_hobject_pc2line_query((duk_hbuffer_fixed *) pc2line, pc);
 					duk_push_number(ctx, (double) line);  /* FIXME: u32 */
-					duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_LINE_NUMBER);
+					duk_def_prop_stridx(ctx, err_index, DUK_STRIDX_LINE_NUMBER, DUK_PROPDESC_FLAGS_WC | DUK_PROPDESC_FLAG_NO_OVERWRITE);
 				}
 				duk_pop(ctx);
 			} else {
-				duk_push_true(ctx);
-				duk_put_prop_stridx(ctx, err_index, DUK_STRIDX_IS_NATIVE);
+				/* Native function, no relevant lineNumber. */
 			}
 
 			duk_pop(ctx);
 		}
 	}
+#endif  /* DUK_USE_TRACEBACKS */
 }
 
 #endif  /* DUK_USE_AUGMENT_ERRORS */

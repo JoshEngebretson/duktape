@@ -32,8 +32,6 @@
 #ifndef DUK_HOBJECT_H_INCLUDED
 #define DUK_HOBJECT_H_INCLUDED
 
-#include "duk_strings.h"
-
 /* there are currently 22 flag bits available */
 #define  DUK_HOBJECT_FLAG_EXTENSIBLE            DUK_HEAPHDR_USER_FLAG(0)   /* object is extensible */
 #define  DUK_HOBJECT_FLAG_CONSTRUCTABLE         DUK_HEAPHDR_USER_FLAG(1)   /* object is constructable */
@@ -50,9 +48,10 @@
 #define  DUK_HOBJECT_FLAG_SPECIAL_ARRAY         DUK_HEAPHDR_USER_FLAG(13)  /* 'Array' object, array length and index special behavior */
 #define  DUK_HOBJECT_FLAG_SPECIAL_STRINGOBJ     DUK_HEAPHDR_USER_FLAG(14)  /* 'String' object, array index special behavior */
 #define  DUK_HOBJECT_FLAG_SPECIAL_ARGUMENTS     DUK_HEAPHDR_USER_FLAG(15)  /* 'Arguments' object and has arguments special behavior (non-strict callee) */
+/* bit 16 unused */
 
-#define  DUK_HOBJECT_FLAG_CLASS_BASE            DUK_HEAPHDR_USER_FLAG_NUMBER(18)
-#define  DUK_HOBJECT_FLAG_CLASS_BITS            4
+#define  DUK_HOBJECT_FLAG_CLASS_BASE            DUK_HEAPHDR_USER_FLAG_NUMBER(17)
+#define  DUK_HOBJECT_FLAG_CLASS_BITS            5
 
 #define  DUK_HOBJECT_GET_CLASS_NUMBER(h)        \
 	DUK_HEAPHDR_GET_FLAG_RANGE(&(h)->hdr, DUK_HOBJECT_FLAG_CLASS_BASE, DUK_HOBJECT_FLAG_CLASS_BITS)
@@ -79,6 +78,9 @@
 #define  DUK_HOBJECT_CLASS_GLOBAL               13
 #define  DUK_HOBJECT_CLASS_OBJENV               14  /* custom */
 #define  DUK_HOBJECT_CLASS_DECENV               15  /* custom */
+#define  DUK_HOBJECT_CLASS_BUFFER               16  /* custom */
+#define  DUK_HOBJECT_CLASS_POINTER              17  /* custom */
+#define  DUK_HOBJECT_CLASS_THREAD               18  /* custom */
 
 #define  DUK_HOBJECT_IS_OBJENV(h)               (DUK_HOBJECT_GET_CLASS_NUMBER((h)) == DUK_HOBJECT_CLASS_OBJENV)
 #define  DUK_HOBJECT_IS_DECENV(h)               (DUK_HOBJECT_GET_CLASS_NUMBER((h)) == DUK_HOBJECT_CLASS_DECENV)
@@ -166,6 +168,11 @@
                                                   DUK_PROPDESC_FLAG_ENUMERABLE | \
                                                   DUK_PROPDESC_FLAG_CONFIGURABLE | \
                                                   DUK_PROPDESC_FLAG_ACCESSOR)
+
+/* additional flags which are passed in the same flags argument as property
+ * flags but are not stored in object properties.
+ */
+#define  DUK_PROPDESC_FLAG_NO_OVERWRITE          (1 << 4)    /* internal define property: skip write silently if exists */
 
 /* convenience */
 #define  DUK_PROPDESC_FLAGS_NONE                 0
@@ -452,7 +459,7 @@ struct duk_hobject {
  *  Exposed data
  */
 
-extern duk_u8 duk_class_number_to_stridx[16];
+extern duk_u8 duk_class_number_to_stridx[32];
 
 /*
  *  Prototypes
@@ -480,6 +487,7 @@ int duk_hobject_hasprop(duk_hthread *thr, duk_tval *tv_obj, duk_tval *tv_key);
 int duk_hobject_delprop_raw(duk_hthread *thr, duk_hobject *obj, duk_hstring *key, int throw_flag);
 int duk_hobject_hasprop_raw(duk_hthread *thr, duk_hobject *obj, duk_hstring *key);
 void duk_hobject_define_property_internal(duk_hthread *thr, duk_hobject *obj, duk_hstring *key, int propflags);
+void duk_hobject_define_accessor_internal(duk_hthread *thr, duk_hobject *obj, duk_hstring *key, duk_hobject *getter, duk_hobject *setter, int propflags);
 void duk_hobject_set_length(duk_hthread *thr, duk_hobject *obj, duk_u32 length);
 void duk_hobject_set_length_zero(duk_hthread *thr, duk_hobject *obj);
 duk_u32 duk_hobject_get_length(duk_hthread *thr, duk_hobject *obj);

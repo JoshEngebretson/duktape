@@ -51,7 +51,7 @@ static int resolve_errhandler(duk_context *ctx, int pop_count, int errhandler_in
 	DUK_ASSERT(pop_count <= duk_get_top(ctx));  /* caller ensures */
 
 	duk_pop_n(ctx, pop_count);
-	(void) duk_push_error_object(ctx, DUK_ERR_API_ERROR, "invalid errhandler");
+	(void) duk_push_error_object_raw(ctx, DUK_ERR_API_ERROR, DUK_FILE_MACRO, DUK_LINE_MACRO, "invalid errhandler");
 	return 0;
 }
 
@@ -95,7 +95,7 @@ void duk_call(duk_context *ctx, int nargs) {
 	idx_func = duk_get_top(ctx) - nargs - 1;  /* must work for nargs <= 0 */
 	if (idx_func < 0 || nargs < 0) {
 		/* note that we can't reliably pop anything here */
-		DUK_ERROR(ctx, DUK_ERR_API_ERROR, "invalid call args");
+		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid call args");
 	}
 
 	/* awkward; we assume there is space for this */
@@ -126,7 +126,7 @@ void duk_call_method(duk_context *ctx, int nargs) {
 	idx_func = duk_get_top(ctx) - nargs - 2;  /* must work for nargs <= 0 */
 	if (idx_func < 0 || nargs < 0) {
 		/* note that we can't reliably pop anything here */
-		DUK_ERROR(ctx, DUK_ERR_API_ERROR, "invalid call args");
+		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid call args");
 	}
 
 	errhandler = thr->heap->lj.errhandler;  /* use existing one (if any) */
@@ -168,7 +168,7 @@ int duk_pcall(duk_context *ctx, int nargs, int errhandler_index) {
 	idx_func = duk_get_top(ctx) - nargs - 1;  /* must work for nargs <= 0 */
 	if (idx_func < 0 || nargs < 0) {
 		/* note that we can't reliably pop anything here */
-		DUK_ERROR(ctx, DUK_ERR_API_ERROR, "invalid call args");
+		DUK_ERROR(thr, DUK_ERR_API_ERROR, "invalid call args");
 		/* FIXME: actually terminate thread? */
 		return DUK_ERR_EXEC_TERM;
 	}
@@ -420,13 +420,14 @@ void duk_new(duk_context *ctx, int nargs) {
 	}
 
 	/*
-	 *  Augment created errors upon creation.
-	 *
-	 * Note: errors should be augmented when they are created, not when
-	 * they are thrown or rethrown.
+	 *  Augment created errors upon creation (not when they are thrown or
+	 *  rethrown).  __FILE__ and __LINE__ are not desirable here; the call
+	 *  stack reflects the caller which is correct.
 	 */
 
-	duk_err_augment_error(thr, thr, -1);
+#ifdef DUK_USE_AUGMENT_ERRORS
+	duk_err_augment_error(thr, thr, -1, NULL, 0);
+#endif
 
 	/* [... retval] */
 

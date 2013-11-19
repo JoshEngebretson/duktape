@@ -91,8 +91,8 @@ int duk_js_toboolean(duk_tval *tv) {
 		/* number */
 		int c;
 		DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
-		c = fpclassify(DUK_TVAL_GET_NUMBER(tv));  /* FIXME: portability */
-		if (c == FP_ZERO || c == FP_NAN) {
+		c = DUK_FPCLASSIFY(DUK_TVAL_GET_NUMBER(tv));
+		if (c == DUK_FP_ZERO || c == DUK_FP_NAN) {
 			return 0;
 		} else {
 			return 1;
@@ -104,6 +104,8 @@ int duk_js_toboolean(duk_tval *tv) {
 
 /*
  *  ToNumber()  (E5 Section 9.3)
+ *
+ *  Value to convert must be on stack top, and is popped before exit.
  *
  *  See: http://www.cs.indiana.edu/~burger/FP-Printing-PLDI96.pdf
  *       http://www.cs.indiana.edu/~burger/fp/index.html
@@ -126,18 +128,13 @@ int duk_js_toboolean(duk_tval *tv) {
  *
  *    - Unlike source code literals, ToNumber() coerces empty strings
  *      and strings with only whitespace to zero (not NaN).
- *
- *  FIXME: unify E5 Section 9.3.1 and main source literal syntax parsers
- *  into a shared helper, providing both (slightly different) semantics?
  */	
 
 /* E5 Section 9.3.1 */
-static double tonumber_string_raw(duk_hthread *thr, duk_hstring *h) {
+static double tonumber_string_raw(duk_hthread *thr) {
 	duk_context *ctx = (duk_context *) thr;
 	int s2n_flags;
 	double d;
-
-	duk_push_hstring(ctx, h);
 
 	/* Quite lenient, e.g. allow empty as zero, but don't allow trailing
 	 * garbage.
@@ -169,7 +166,7 @@ double duk_js_tonumber(duk_hthread *thr, duk_tval *tv) {
 
 	switch (DUK_TVAL_GET_TAG(tv)) {
 	case DUK_TAG_UNDEFINED: {
-		/* return a specific NAN (although not strictly necessary) */
+		/* return a specific NaN (although not strictly necessary) */
 		double d;
 		DUK_DOUBLE_SET_NAN(&d);
 		DUK_ASSERT(DUK_DOUBLE_IS_NORMALIZED(&d));
@@ -187,7 +184,8 @@ double duk_js_tonumber(duk_hthread *thr, duk_tval *tv) {
 	}
 	case DUK_TAG_STRING: {
 		duk_hstring *h = DUK_TVAL_GET_STRING(tv);
-		return tonumber_string_raw(thr, h);
+		duk_push_hstring(ctx, h);
+		return tonumber_string_raw(thr);
 	}
 	case DUK_TAG_OBJECT: {
 		/* Note: ToPrimitive(object,hint) == [[DefaultValue]](object,hint),
@@ -206,16 +204,19 @@ double duk_js_tonumber(duk_hthread *thr, duk_tval *tv) {
 		return d;
 	}
 	case DUK_TAG_BUFFER: {
-		/* FIXME: what's a good conversion?  parse contents as a string (tonumber_string_raw)? */
+		/* Coerce like a string.  This makes sense because addition also treats
+		 * buffers like strings.
+		 */
 		duk_hbuffer *h = DUK_TVAL_GET_BUFFER(tv);
-		DUK_ASSERT(h != NULL);
-		if (DUK_HBUFFER_GET_SIZE(h) > 0) {
-			return 1.0;
-		}
-		return 0.0;
+		duk_push_hbuffer(ctx, h);
+		duk_to_string(ctx, -1);  /* XXX: expensive, but numconv now expects to see a string */
+		return tonumber_string_raw(thr);
 	}
 	case DUK_TAG_POINTER: {
-		/* FIXME: what's a good conversion?  pointer as a number?  NAN? */
+		/* Coerce like boolean.  This allows code to do something like:
+		 *
+		 *    if (ptr) { ... }
+		 */
 		void *p = DUK_TVAL_GET_POINTER(tv);
 		return (p != NULL ? 1.0 : 0.0);
 	}
@@ -235,17 +236,17 @@ double duk_js_tonumber(duk_hthread *thr, duk_tval *tv) {
 
 /* exposed, used by e.g. duk_builtin_date.c */
 double duk_js_tointeger_number(double x) {
-	int c = fpclassify(x);
+	int c = DUK_FPCLASSIFY(x);
 
-	if (c == FP_NAN) {
+	if (c == DUK_FP_NAN) {
 		return 0.0;
-	} else if (c == FP_ZERO || c == FP_INFINITE) {
+	} else if (c == DUK_FP_ZERO || c == DUK_FP_INFINITE) {
 		/* FIXME: FP_ZERO check can be removed, the else clause handles it
 		 * correctly (preserving sign).
 		 */
 		return x;
 	} else {
-		int s = signbit(x);
+		int s = DUK_SIGNBIT(x);
 		x = floor(fabs(x));  /* truncate towards zero */
 		if (s) {
 			x = -x;
@@ -265,16 +266,16 @@ double duk_js_tointeger(duk_hthread *thr, duk_tval *tv) {
 
 /* combined algorithm matching E5 Sections 9.5 and 9.6 */	
 static double toint32_or_touint32_helper(double x, int is_toint32) {
-	int c = fpclassify(x);
+	int c = DUK_FPCLASSIFY(x);
 	int s;
 
-	if (c == FP_NAN || c == FP_ZERO || c == FP_INFINITE) {
+	if (c == DUK_FP_NAN || c == DUK_FP_ZERO || c == DUK_FP_INFINITE) {
 		return 0.0;
 	}
 
 
 	/* x = sign(x) * floor(abs(x)), i.e. truncate towards zero, keep sign */
-	s = signbit(x);
+	s = DUK_SIGNBIT(x);
 	x = floor(fabs(x));
 	if (s) {
 		x = -x;
@@ -305,7 +306,7 @@ static double toint32_or_touint32_helper(double x, int is_toint32) {
 duk_i32 duk_js_toint32(duk_hthread *thr, duk_tval *tv) {
 	double d = duk_js_tonumber(thr, tv);  /* invalidates tv */
 	d = toint32_or_touint32_helper(d, 1);
-	DUK_ASSERT(fpclassify(d) == FP_ZERO || fpclassify(d) == FP_NORMAL);
+	DUK_ASSERT(DUK_FPCLASSIFY(d) == DUK_FP_ZERO || DUK_FPCLASSIFY(d) == DUK_FP_NORMAL);
 	DUK_ASSERT(d >= -2147483648.0 && d <= 2147483647.0);  /* [-0x80000000,0x7fffffff] */
 	DUK_ASSERT(d == ((double) ((duk_i32) d)));  /* whole, won't clip */
 	return (duk_i32) d;
@@ -315,7 +316,7 @@ duk_i32 duk_js_toint32(duk_hthread *thr, duk_tval *tv) {
 duk_u32 duk_js_touint32(duk_hthread *thr, duk_tval *tv) {
 	double d = duk_js_tonumber(thr, tv);  /* invalidates tv */
 	d = toint32_or_touint32_helper(d, 0);
-	DUK_ASSERT(fpclassify(d) == FP_ZERO || fpclassify(d) == FP_NORMAL);
+	DUK_ASSERT(DUK_FPCLASSIFY(d) == DUK_FP_ZERO || DUK_FPCLASSIFY(d) == DUK_FP_NORMAL);
 	DUK_ASSERT(d >= 0.0 && d <= 4294967295.0);  /* [0x00000000, 0xffffffff] */
 	DUK_ASSERT(d == ((double) ((duk_u32) d)));  /* whole, won't clip */
 	return (duk_u32) d;
@@ -410,16 +411,16 @@ int duk_js_iscallable(duk_tval *tv_x) {
  */
 
 int duk_js_equals_number(double x, double y) {
-	int cx = fpclassify(x);
-	int cy = fpclassify(y);
+	int cx = DUK_FPCLASSIFY(x);
+	int cy = DUK_FPCLASSIFY(y);
 
-	if (cx == FP_NAN || cy == FP_NAN) {
+	if (cx == DUK_FP_NAN || cy == DUK_FP_NAN) {
 		return 0;
 	}
 
 	/* FIXME: optimize */
 
-	if (cx == FP_ZERO && cy == FP_ZERO) {
+	if (cx == DUK_FP_ZERO && cy == DUK_FP_ZERO) {
 		return 1;
 	}
 
@@ -430,20 +431,21 @@ int duk_js_equals_number(double x, double y) {
 	return 0;
 }
 
-/* E5 Section 11.9.3 */
+/* E5 Section 11.9.3. */
 int duk_js_equals(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y) {
 	duk_context *ctx = (duk_context *) thr;
+	duk_tval *tv_tmp;
 
 	/*
-	 *  FIXME: very direct translation now - should be made more
-	 *  efficient, avoid recursion, etc.
+	 *  XXX: very direct translation now - should be made more efficient,
+	 *  avoid recursion, etc.
 	 */
 
 	/*
 	 *  Same type?
 	 *
-	 *  Note: since number values have no explicit tag, need the awkward
-	 *  if + switch.
+	 *  Note: since number values have no explicit tag in the 8-byte
+	 *  representation, need the awkward if + switch.
 	 */
 
 	if (DUK_TVAL_IS_NUMBER(tv_x) && DUK_TVAL_IS_NUMBER(tv_y)) {
@@ -464,13 +466,34 @@ int duk_js_equals(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y) {
 			return DUK_TVAL_GET_POINTER(tv_x) == DUK_TVAL_GET_POINTER(tv_y);
 		}
 		case DUK_TAG_STRING:
-		case DUK_TAG_OBJECT:
-		case DUK_TAG_BUFFER: {
+		case DUK_TAG_OBJECT: {
 			/* heap pointer comparison suffices */
 			return DUK_TVAL_GET_HEAPHDR(tv_x) == DUK_TVAL_GET_HEAPHDR(tv_y);
 		}
+		case DUK_TAG_BUFFER: {
+			/* non-strict equality for buffers compares contents */
+			duk_hbuffer *h_x = DUK_TVAL_GET_BUFFER(tv_x);
+			duk_hbuffer *h_y = DUK_TVAL_GET_BUFFER(tv_y);
+			size_t len_x = DUK_HBUFFER_GET_SIZE(h_x);
+			size_t len_y = DUK_HBUFFER_GET_SIZE(h_y);
+			void *buf_x;
+			void *buf_y;
+			if (len_x != len_y) {
+				return 0;
+			}
+			buf_x = (void *) DUK_HBUFFER_GET_DATA_PTR(h_x);
+			buf_y = (void *) DUK_HBUFFER_GET_DATA_PTR(h_y);
+			/* if len_x == len_y == 0, buf_x and/or buf_y may
+			 * be NULL, but that's OK.
+			 */
+			DUK_ASSERT(len_x == len_y);
+			DUK_ASSERT(len_x == 0 || buf_x != NULL);
+			DUK_ASSERT(len_y == 0 || buf_y != NULL);
+			return (DUK_MEMCMP(buf_x, buf_y, len_x) == 0) ? 1 : 0;
+		}
 		default: {
 			DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv_x));
+			DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv_y));
 			DUK_NEVER_HERE();
 			return 0;
 		}
@@ -479,71 +502,93 @@ int duk_js_equals(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y) {
 
 	/*
 	 *  Types are different; various cases
+	 *
+	 *  Since comparison is symmetric, we use a "swap trick" to reduce
+	 *  code size.
 	 */
 
-	/* undefined/null are considered equal (e.g. "null == undefined" -> true) */
+	/* Undefined/null are considered equal (e.g. "null == undefined" -> true). */
 	if ((DUK_TVAL_IS_UNDEFINED(tv_x) && DUK_TVAL_IS_NULL(tv_y)) ||
 	    (DUK_TVAL_IS_NULL(tv_x) && DUK_TVAL_IS_UNDEFINED(tv_y))) {
 		return 1;
 	}
 
-	/* number/string -> coerce string to number (e.g. "'1.5' == 1.5" -> true) */
-	if (DUK_TVAL_IS_NUMBER(tv_x) && DUK_TVAL_IS_STRING(tv_y)) {
-		/* FIXME: this is possible without resorting to the value stack */
-		double d1, d2;
-		d1 = DUK_TVAL_GET_NUMBER(tv_x);
-		duk_push_tval(ctx, tv_y);
-		duk_to_number(ctx, -1);
-		d2 = duk_require_number(ctx, -1);
-		duk_pop(ctx);
-		return duk_js_equals_number(d1, d2);
+	/* Number/string-or-buffer -> coerce string to number (e.g. "'1.5' == 1.5" -> true). */
+	if (DUK_TVAL_IS_NUMBER(tv_x) && (DUK_TVAL_IS_STRING(tv_y) || DUK_TVAL_IS_BUFFER(tv_y))) {
+		/* the next 'if' is guaranteed to match after swap */
+		tv_tmp = tv_x;
+		tv_x = tv_y;
+		tv_y = tv_tmp;
 	}
-	if (DUK_TVAL_IS_STRING(tv_x) && DUK_TVAL_IS_NUMBER(tv_y)) {
+	if ((DUK_TVAL_IS_STRING(tv_x) || DUK_TVAL_IS_BUFFER(tv_x)) && DUK_TVAL_IS_NUMBER(tv_y)) {
 		/* FIXME: this is possible without resorting to the value stack */
 		double d1, d2;
 		d2 = DUK_TVAL_GET_NUMBER(tv_y);
 		duk_push_tval(ctx, tv_x);
+		duk_to_string(ctx, -1);  /* buffer values are coerced first to string here */
 		duk_to_number(ctx, -1);
 		d1 = duk_require_number(ctx, -1);
 		duk_pop(ctx);
 		return duk_js_equals_number(d1, d2);
 	}
 
-	/* boolean/(any) -> coerce boolean to number and try again */
+	/* Buffer/string -> compare contents. */
+	if (DUK_TVAL_IS_BUFFER(tv_x) && DUK_TVAL_IS_STRING(tv_y)) {
+		tv_tmp = tv_x;
+		tv_x = tv_y;
+		tv_y = tv_tmp;
+	}
+	if (DUK_TVAL_IS_STRING(tv_x) && DUK_TVAL_IS_BUFFER(tv_y)) {
+		duk_hstring *h_x = DUK_TVAL_GET_STRING(tv_x);
+		duk_hbuffer *h_y = DUK_TVAL_GET_BUFFER(tv_y);
+		size_t len_x = DUK_HSTRING_GET_BYTELEN(h_x);
+		size_t len_y = DUK_HBUFFER_GET_SIZE(h_y);
+		void *buf_x;
+		void *buf_y;
+		if (len_x != len_y) {
+			return 0;
+		}
+		buf_x = (void *) DUK_HSTRING_GET_DATA(h_x);
+		buf_y = (void *) DUK_HBUFFER_GET_DATA_PTR(h_y);
+		/* if len_x == len_y == 0, buf_x and/or buf_y may
+		 * be NULL, but that's OK.
+		 */
+		DUK_ASSERT(len_x == len_y);
+		DUK_ASSERT(len_x == 0 || buf_x != NULL);
+		DUK_ASSERT(len_y == 0 || buf_y != NULL);
+		return (DUK_MEMCMP(buf_x, buf_y, len_x) == 0) ? 1 : 0;
+	}
+
+	/* Boolean/any -> coerce boolean to number and try again.  If boolean is
+	 * compared to a pointer, the final comparison after coercion now always
+	 * yields false (as pointer vs. number compares to false), but this is
+	 * not special cased.
+	 */
 	if (DUK_TVAL_IS_BOOLEAN(tv_x)) {
-		/* FIXME: ToNumber(bool) is +1.0 or 0.0 -> make faster */
-		int rc;
-		duk_push_tval(ctx, tv_x);
-		duk_push_tval(ctx, tv_y);
-		duk_to_number(ctx, -2);
-		rc = duk_js_equals(thr, duk_get_tval(ctx, -2), duk_get_tval(ctx, -1));
-		duk_pop_2(ctx);
-		return rc;
+		tv_tmp = tv_x;
+		tv_x = tv_y;
+		tv_y = tv_tmp;
 	}
 	if (DUK_TVAL_IS_BOOLEAN(tv_y)) {
-		/* FIXME: ToNumber(bool) is +1.0 or 0.0 -> make faster */
+		/* ToNumber(bool) is +1.0 or 0.0.  Tagged boolean value is always 0 or 1. */
 		int rc;
+		DUK_ASSERT(DUK_TVAL_GET_BOOLEAN(tv_y) == 0 || DUK_TVAL_GET_BOOLEAN(tv_y) == 1);
 		duk_push_tval(ctx, tv_x);
-		duk_push_tval(ctx, tv_y);
-		duk_to_number(ctx, -1);
+		duk_push_int(ctx, DUK_TVAL_GET_BOOLEAN(tv_y));
 		rc = duk_js_equals(thr, duk_get_tval(ctx, -2), duk_get_tval(ctx, -1));
 		duk_pop_2(ctx);
 		return rc;
 	}
 
-	/* string-or-number/object -> coerce object to primitive (apparently without hint), then try again */
-	if ((DUK_TVAL_IS_STRING(tv_x) || DUK_TVAL_IS_NUMBER(tv_x)) &&
+	/* String-number-buffer/object -> coerce object to primitive (apparently without hint), then try again. */
+	if ((DUK_TVAL_IS_STRING(tv_x) || DUK_TVAL_IS_NUMBER(tv_x) || DUK_TVAL_IS_BUFFER(tv_x)) &&
 	    DUK_TVAL_IS_OBJECT(tv_y)) {
-		int rc;
-		duk_push_tval(ctx, tv_x);
-		duk_push_tval(ctx, tv_y);
-		duk_to_primitive(ctx, -1, DUK_HINT_NONE);  /* apparently no hint? */
-		rc = duk_js_equals(thr, duk_get_tval(ctx, -2), duk_get_tval(ctx, -1));
-		duk_pop_2(ctx);
-		return rc;
+		tv_tmp = tv_x;
+		tv_x = tv_y;
+		tv_y = tv_tmp;
 	}
 	if (DUK_TVAL_IS_OBJECT(tv_x) &&
-	    (DUK_TVAL_IS_STRING(tv_y) || DUK_TVAL_IS_NUMBER(tv_y))) {
+	    (DUK_TVAL_IS_STRING(tv_y) || DUK_TVAL_IS_NUMBER(tv_y) || DUK_TVAL_IS_BUFFER(tv_y))) {
 		int rc;
 		duk_push_tval(ctx, tv_x);
 		duk_push_tval(ctx, tv_y);
@@ -553,9 +598,7 @@ int duk_js_equals(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y) {
 		return rc;
 	}
 
-	/* FIXME: coercion rules for internal types */
-
-	/* nothing worked -> not equal */
+	/* Nothing worked -> not equal. */
 	return 0;
 }
 
@@ -611,23 +654,23 @@ int duk_js_strict_equals(duk_tval *tv_x, duk_tval *tv_y) {
 
 /* E5 Section 9.12 */
 int duk_js_samevalue_number(double x, double y) {
-	int cx = fpclassify(x);
-	int cy = fpclassify(y);
+	int cx = DUK_FPCLASSIFY(x);
+	int cy = DUK_FPCLASSIFY(y);
 
-	if (cx == FP_NAN && cy == FP_NAN) {
+	if (cx == DUK_FP_NAN && cy == DUK_FP_NAN) {
 		/* SameValue(NaN, NaN) = true, regardless of NaN sign or extra bits */
 		return 1;
 	}
 
-	if (cx == FP_ZERO && cy == FP_ZERO) {
+	if (cx == DUK_FP_ZERO && cy == DUK_FP_ZERO) {
 		/* Note: cannot assume that a non-zero return value of signbit() would
 		 * always be the same -- hence cannot (portably) use something like:
 		 *
 		 *     signbit(x) == signbit(y)
 		 */
 
-		int sx = (signbit(x) ? 1 : 0);
-		int sy = (signbit(y) ? 1 : 0);
+		int sx = (DUK_SIGNBIT(x) ? 1 : 0);
+		int sy = (DUK_SIGNBIT(y) ? 1 : 0);
 
 		return (sx == sy);
 	}
@@ -723,21 +766,18 @@ int duk_js_string_compare(duk_hstring *h1, duk_hstring *h2) {
 	h2_len = DUK_HSTRING_GET_BYTELEN(h2);
 	prefix_len = (h1_len <= h2_len ? h1_len : h2_len);
 
+	/* FIXME: this special case can now be removed with DUK_MEMCMP */
 	/* memcmp() should return zero (equal) for zero length, but avoid
 	 * it because there are some platform specific bugs.  Don't use
 	 * strncmp() because it stops comparing at a NUL.
 	 */
 
-	/* FIXME: use a wrapper utility memcmp() instead of doing the zero
-	 * check everywhere separately.
-	 */
-
 	if (prefix_len == 0) {
 		rc = 0;
 	} else {
-		rc = memcmp((const char *) DUK_HSTRING_GET_DATA(h1),
-		            (const char *) DUK_HSTRING_GET_DATA(h2),
-		            prefix_len);
+		rc = DUK_MEMCMP((const char *) DUK_HSTRING_GET_DATA(h1),
+		                (const char *) DUK_HSTRING_GET_DATA(h2),
+		                prefix_len);
 	}
 
 	if (rc < 0) {
@@ -805,16 +845,16 @@ int duk_js_compare_helper(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y, int 
 			d1 = duk_to_number(ctx, -2);
 		}
 
-		c1 = fpclassify(d1);
-		s1 = signbit(d1);
-		c2 = fpclassify(d2);
-		s2 = signbit(d2);
+		c1 = DUK_FPCLASSIFY(d1);
+		s1 = DUK_SIGNBIT(d1);
+		c2 = DUK_FPCLASSIFY(d2);
+		s2 = DUK_SIGNBIT(d2);
 
-		if (c1 == FP_NAN || c2 == FP_NAN) {
+		if (c1 == DUK_FP_NAN || c2 == DUK_FP_NAN) {
 			goto lt_undefined;
 		}
 
-		if (c1 == FP_ZERO && c2 == FP_ZERO) {
+		if (c1 == DUK_FP_ZERO && c2 == DUK_FP_ZERO) {
 			/* For all combinations: +0 < +0, +0 < -0, -0 < +0, -0 < -0,
 			 * steps e, f, and g.
 			 */
@@ -825,22 +865,22 @@ int duk_js_compare_helper(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y, int 
 			goto lt_false;
 		}
 
-		if (c1 == FP_INFINITE && s1 == 0) {
+		if (c1 == DUK_FP_INFINITE && s1 == 0) {
 			/* x == +Infinity */
 			goto lt_false;
 		}
 
-		if (c2 == FP_INFINITE && s2 == 0) {
+		if (c2 == DUK_FP_INFINITE && s2 == 0) {
 			/* y == +Infinity */
 			goto lt_true;
 		}
 
-		if (c2 == FP_INFINITE && s2 != 0) {
+		if (c2 == DUK_FP_INFINITE && s2 != 0) {
 			/* y == -Infinity */
 			goto lt_false;
 		}
 
-		if (c1 == FP_INFINITE && s1 != 0) {
+		if (c1 == DUK_FP_INFINITE && s1 != 0) {
 			/* x == -Infinity */
 			goto lt_true;
 		}
@@ -1129,7 +1169,7 @@ duk_hstring *duk_js_typeof(duk_hthread *thr, duk_tval *tv_x) {
 	}
 	case DUK_TAG_POINTER: {
 		/* implementation specific */
-		idx = DUK_STRIDX_POINTER;
+		idx = DUK_STRIDX_LC_POINTER;
 		break;
 	}
 	case DUK_TAG_STRING: {
@@ -1148,7 +1188,7 @@ duk_hstring *duk_js_typeof(duk_hthread *thr, duk_tval *tv_x) {
 	}
 	case DUK_TAG_BUFFER: {
 		/* implementation specific */
-		idx = DUK_STRIDX_BUFFER;
+		idx = DUK_STRIDX_LC_BUFFER;
 		break;
 	}
 	default: {
@@ -1183,7 +1223,7 @@ static int raw_string_to_arrayindex(duk_u8 *str, duk_u32 blen, duk_u32 *out_idx)
 	if (blen > 10) {
 		return 0;
 	}
-	memcpy(buf, str, blen);
+	DUK_MEMCPY(buf, str, blen);
 	buf[blen] = (char) 0;
 
 	if (sscanf(buf, "%d", (int *) out_idx) == 1 && strstr(buf, ".") == NULL) {

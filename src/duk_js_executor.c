@@ -83,6 +83,8 @@ static void _vm_arith_add(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y, int 
 	 *  the exact semantics.
 	 *
 	 *  E5 Section 11.6.1.
+	 *
+	 *  Custom types also have special behavior implemented here.
 	 */
 
 	duk_context *ctx = (duk_context *) thr;
@@ -123,7 +125,12 @@ static void _vm_arith_add(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y, int 
 	duk_to_primitive(ctx, -2, DUK_HINT_NONE);  /* side effects -> don't use tv_x, tv_y after */
 	duk_to_primitive(ctx, -1, DUK_HINT_NONE);
 
-	if (duk_is_string(ctx, -2) || duk_is_string(ctx, -1)) {
+	/* As a first approximation, buffer values are coerced to strings
+	 * for addition.  This means that adding two buffers currently
+	 * results in a string.
+	 */
+	if (duk_check_type_mask(ctx, -2, DUK_TYPE_MASK_STRING | DUK_TYPE_MASK_BUFFER) ||
+	    duk_check_type_mask(ctx, -1, DUK_TYPE_MASK_STRING | DUK_TYPE_MASK_BUFFER)) {
 		duk_to_string(ctx, -2);
 		duk_to_string(ctx, -1);
 		duk_concat(ctx, 2);  /* [... s1 s2] -> [... s1+s2] */
@@ -202,7 +209,7 @@ static void _vm_arith_binary_op(duk_hthread *thr, duk_tval *tv_x, duk_tval *tv_y
 		break;
 	}
 	default: {
-		val = NAN;  /* should not happen */
+		val = DUK_DOUBLE_NAN;  /* should not happen */
 		break;
 	}
 	}
@@ -361,7 +368,7 @@ static void _vm_arith_unary_op(duk_hthread *thr, duk_tval *tv_x, int idx_z, int 
 		break;
 	}
 	default: {
-		val = NAN;  /* should not happen */
+		val = DUK_DOUBLE_NAN;  /* should not happen */
 		break;
 	}
 	}
@@ -705,7 +712,7 @@ static int handle_longjmp(duk_hthread *thr,
 		DUK_ASSERT(thr->callstack_top >= 2);                                                                         /* Ecmascript activation + __duk__.resume() activation */
 		DUK_ASSERT((thr->callstack + thr->callstack_top - 1)->func != NULL &&
 		           DUK_HOBJECT_IS_NATIVEFUNCTION((thr->callstack + thr->callstack_top - 1)->func) &&
-		           ((duk_hnativefunction *) (thr->callstack + thr->callstack_top - 1)->func)->func == duk_builtin_duk_object_resume);
+		           ((duk_hnativefunction *) (thr->callstack + thr->callstack_top - 1)->func)->func == duk_builtin_thread_resume);
 		DUK_ASSERT((thr->callstack + thr->callstack_top - 2)->func != NULL &&
 		           DUK_HOBJECT_IS_COMPILEDFUNCTION((thr->callstack + thr->callstack_top - 2)->func));                /* an Ecmascript function */
 		DUK_ASSERT((thr->callstack + thr->callstack_top - 2)->idx_retval >= 0);                                      /* waiting for a value */
@@ -725,7 +732,7 @@ static int handle_longjmp(duk_hthread *thr,
 		DUK_ASSERT(resumee->state != DUK_HTHREAD_STATE_YIELDED ||
 		           ((resumee->callstack + resumee->callstack_top - 1)->func != NULL &&
 		            DUK_HOBJECT_IS_NATIVEFUNCTION((resumee->callstack + resumee->callstack_top - 1)->func) &&
-		            ((duk_hnativefunction *) (resumee->callstack + resumee->callstack_top - 1)->func)->func == duk_builtin_duk_object_yield));
+		            ((duk_hnativefunction *) (resumee->callstack + resumee->callstack_top - 1)->func)->func == duk_builtin_thread_yield));
 		DUK_ASSERT(resumee->state != DUK_HTHREAD_STATE_YIELDED ||
 		           ((resumee->callstack + resumee->callstack_top - 2)->func != NULL &&
 		            DUK_HOBJECT_IS_COMPILEDFUNCTION((resumee->callstack + resumee->callstack_top - 2)->func)));      /* an Ecmascript function */
@@ -844,7 +851,7 @@ static int handle_longjmp(duk_hthread *thr,
 		DUK_ASSERT(thr->callstack_top >= 2);                                                                         /* Ecmascript activation + __duk__.yield() activation */
 		DUK_ASSERT((thr->callstack + thr->callstack_top - 1)->func != NULL &&
 		           DUK_HOBJECT_IS_NATIVEFUNCTION((thr->callstack + thr->callstack_top - 1)->func) &&
-		           ((duk_hnativefunction *) (thr->callstack + thr->callstack_top - 1)->func)->func == duk_builtin_duk_object_yield);
+		           ((duk_hnativefunction *) (thr->callstack + thr->callstack_top - 1)->func)->func == duk_builtin_thread_yield);
 		DUK_ASSERT((thr->callstack + thr->callstack_top - 2)->func != NULL &&
 		           DUK_HOBJECT_IS_COMPILEDFUNCTION((thr->callstack + thr->callstack_top - 2)->func));                /* an Ecmascript function */
 		DUK_ASSERT((thr->callstack + thr->callstack_top - 2)->idx_retval >= 0);                                      /* waiting for a value */
@@ -856,7 +863,7 @@ static int handle_longjmp(duk_hthread *thr,
 		DUK_ASSERT(resumer->callstack_top >= 2);                                                                     /* Ecmascript activation + __duk__.resume() activation */
 		DUK_ASSERT((resumer->callstack + resumer->callstack_top - 1)->func != NULL &&
 		           DUK_HOBJECT_IS_NATIVEFUNCTION((resumer->callstack + resumer->callstack_top - 1)->func) &&
-		           ((duk_hnativefunction *) (resumer->callstack + resumer->callstack_top - 1)->func)->func == duk_builtin_duk_object_resume);
+		           ((duk_hnativefunction *) (resumer->callstack + resumer->callstack_top - 1)->func)->func == duk_builtin_thread_resume);
 		DUK_ASSERT((resumer->callstack + resumer->callstack_top - 2)->func != NULL &&
 		           DUK_HOBJECT_IS_COMPILEDFUNCTION((resumer->callstack + resumer->callstack_top - 2)->func));        /* an Ecmascript function */
 		DUK_ASSERT((resumer->callstack + resumer->callstack_top - 2)->idx_retval >= 0);                              /* waiting for a value */
@@ -996,7 +1003,7 @@ static int handle_longjmp(duk_hthread *thr,
 		DUK_ASSERT(thr->resumer->callstack_top >= 2);  /* Ecmascript activation + __duk__.resume() activation */
 		DUK_ASSERT((thr->resumer->callstack + thr->resumer->callstack_top - 1)->func != NULL &&
 		           DUK_HOBJECT_IS_NATIVEFUNCTION((thr->resumer->callstack + thr->resumer->callstack_top - 1)->func) &&
-		           ((duk_hnativefunction *) (thr->resumer->callstack + thr->resumer->callstack_top - 1)->func)->func == duk_builtin_duk_object_resume);  /* __duk__.resume() */
+		           ((duk_hnativefunction *) (thr->resumer->callstack + thr->resumer->callstack_top - 1)->func)->func == duk_builtin_thread_resume);  /* __duk__.resume() */
 		DUK_ASSERT((thr->resumer->callstack + thr->resumer->callstack_top - 2)->func != NULL &&
 		           DUK_HOBJECT_IS_COMPILEDFUNCTION((thr->resumer->callstack + thr->resumer->callstack_top - 2)->func));  /* an Ecmascript function */
 		DUK_ASSERT((thr->resumer->callstack + thr->resumer->callstack_top - 2)->idx_retval >= 0);                        /* waiting for a value */
@@ -1171,7 +1178,7 @@ static int handle_longjmp(duk_hthread *thr,
 		DUK_ASSERT(thr->resumer->callstack_top >= 2);  /* Ecmascript activation + __duk__.resume() activation */
 		DUK_ASSERT((thr->resumer->callstack + thr->resumer->callstack_top - 1)->func != NULL &&
 		           DUK_HOBJECT_IS_NATIVEFUNCTION((thr->resumer->callstack + thr->resumer->callstack_top - 1)->func) &&
-		           ((duk_hnativefunction *) (thr->resumer->callstack + thr->resumer->callstack_top - 1)->func)->func == duk_builtin_duk_object_resume);  /* __duk__.resume() */
+		           ((duk_hnativefunction *) (thr->resumer->callstack + thr->resumer->callstack_top - 1)->func)->func == duk_builtin_thread_resume);  /* __duk__.resume() */
 		DUK_ASSERT((thr->resumer->callstack + thr->resumer->callstack_top - 2)->func != NULL &&
 		           DUK_HOBJECT_IS_COMPILEDFUNCTION((thr->resumer->callstack + thr->resumer->callstack_top - 2)->func));  /* an Ecmascript function */
 
@@ -1224,7 +1231,7 @@ static int handle_longjmp(duk_hthread *thr,
 	return retval;
 
  convert_to_internal_error:
-	DUK_ERROR((duk_context *) thr, DUK_ERR_INTERNAL_ERROR, "internal error in bytecode executor longjmp handler");
+	DUK_ERROR(thr, DUK_ERR_INTERNAL_ERROR, "internal error in bytecode executor longjmp handler");
 #if 0
 	/* FIXME: could also handle internally */
 	thr->heap->lj.type = DUK_LJ_TYPE_THROW;
@@ -1762,7 +1769,7 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 
 			duk_push_tval(ctx, REGCONSTP(c));
 			duk_push_tval(ctx, REGCONSTP(b));  /* -> [ ... escaped_source bytecode ] */
-			duk_regexp_create_instance(ctx);   /* -> [ ... regexp_instance ] */
+			duk_regexp_create_instance(thr);   /* -> [ ... regexp_instance ] */
 			DUK_DDDPRINT("regexp instance: %!iT", duk_get_tval(ctx, -1));
 			duk_replace(ctx, a);
 #else
@@ -1806,11 +1813,11 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 		case DUK_OP_GETVAR: {
 			duk_context *ctx = (duk_context *) thr;
 			int a = DUK_DEC_A(ins);
-			int b = DUK_DEC_B(ins);
+			int bc = DUK_DEC_BC(ins);
 			duk_tval *tv1;
 			duk_hstring *name;
 
-			tv1 = REGCONSTP(b);
+			tv1 = CONSTP(bc);
 			if (!DUK_TVAL_IS_STRING(tv1)) {
 				DUK_DDDPRINT("GETVAR not a string: %!T", tv1);
 				INTERNAL_ERROR("GETVAR name not a string");
@@ -1825,22 +1832,22 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 		}
 
 		case DUK_OP_PUTVAR: {
-			int b = DUK_DEC_B(ins);
-			int c = DUK_DEC_C(ins);
+			int a = DUK_DEC_A(ins);
+			int bc = DUK_DEC_BC(ins);
 			duk_tval *tv1;
 			duk_hstring *name;
 
-			tv1 = REGCONSTP(b);
+			tv1 = CONSTP(bc);
 			if (!DUK_TVAL_IS_STRING(tv1)) {
 				INTERNAL_ERROR("PUTVAR name not a string");
 			}
 			name = DUK_TVAL_GET_STRING(tv1);
 
-			/* FIXME: putvar takes an duk_tval pointer, which is awkward and
+			/* FIXME: putvar takes a duk_tval pointer, which is awkward and
 			 * should be reworked.
 			 */
 
-			tv1 = REGCONSTP(c);  /* val */
+			tv1 = REGP(a);  /* val */
 			duk_js_putvar_activation(thr, act, name, tv1, STRICT());
 			break;
 		}
@@ -2718,7 +2725,8 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 		case DUK_OP_EXTRA: {
 			/* FIXME: shared decoding of 'b' and 'c'? */
 
-			switch (DUK_DEC_A(ins)) {
+			int extraop = DUK_DEC_A(ins);
+			switch (extraop) {
 
 			case DUK_EXTRAOP_NOP: {
 				/* nop */
@@ -2745,11 +2753,11 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 			}
 
 			case DUK_EXTRAOP_LDUNDEF: {
-				int b = DUK_DEC_B(ins);
+				int bc = DUK_DEC_BC(ins);
 				duk_tval tv_tmp;
 				duk_tval *tv1;
 
-				tv1 = REGP(b);
+				tv1 = REGP(bc);
 				DUK_TVAL_SET_TVAL(&tv_tmp, tv1);
 				DUK_TVAL_SET_UNDEFINED_ACTUAL(tv1);
 				DUK_TVAL_DECREF(thr, &tv_tmp);  /* side effects */
@@ -2757,28 +2765,27 @@ void duk_js_execute_bytecode(duk_hthread *entry_thread) {
 			}
 
 			case DUK_EXTRAOP_LDNULL: {
-				int b = DUK_DEC_B(ins);
+				int bc = DUK_DEC_BC(ins);
 				duk_tval tv_tmp;
 				duk_tval *tv1;
 
-				tv1 = REGP(b);
+				tv1 = REGP(bc);
 				DUK_TVAL_SET_TVAL(&tv_tmp, tv1);
 				DUK_TVAL_SET_NULL(tv1);
 				DUK_TVAL_DECREF(thr, &tv_tmp);  /* side effects */
 				break;
 			}
 
-			case DUK_EXTRAOP_LDBOOL: {
-				int b = DUK_DEC_B(ins);
-				int c = DUK_DEC_C(ins);
+			case DUK_EXTRAOP_LDTRUE:
+			case DUK_EXTRAOP_LDFALSE: {
+				int bc = DUK_DEC_BC(ins);
 				duk_tval tv_tmp;
 				duk_tval *tv1;
+				int bval = (extraop == DUK_EXTRAOP_LDTRUE ? 1 : 0);
 
-				DUK_ASSERT(c == 0 || c == 1);
-
-				tv1 = REGP(b);
+				tv1 = REGP(bc);
 				DUK_TVAL_SET_TVAL(&tv_tmp, tv1);
-				DUK_TVAL_SET_BOOLEAN(tv1, c);
+				DUK_TVAL_SET_BOOLEAN(tv1, bval);
 				DUK_TVAL_DECREF(thr, &tv_tmp);  /* side effects */
 				break;
 			}

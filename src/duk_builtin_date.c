@@ -21,11 +21,13 @@
 
 #if defined(DUK_USE_DATE_NOW_GETTIMEOFDAY)
 #define  GET_NOW_TIMEVAL      get_now_timeval_gettimeofday
+#elif defined(DUK_USE_DATE_NOW_TIME)
+#define  GET_NOW_TIMEVAL      get_now_timeval_time
 #else
 #error no function to get current time
 #endif
 
-#if defined(DUK_USE_DATE_TZO_GMTIME)
+#if defined(DUK_USE_DATE_TZO_GMTIME) || defined(DUK_USE_DATE_TZO_GMTIME_R)
 #define  GET_LOCAL_TZOFFSET   get_local_tzoffset_gmtime
 #else
 #error no function to get local tzoffset
@@ -111,16 +113,27 @@ static double get_now_timeval_gettimeofday(duk_context *ctx) {
 }
 #endif  /* DUK_USE_DATE_NOW_GETTIMEOFDAY */
 
-#ifdef DUK_USE_DATE_TZO_GMTIME
+#ifdef DUK_USE_DATE_NOW_TIME
+/* Not a very good provider: only full seconds are available. */
+static double get_now_timeval_time(duk_context *ctx) {
+	time_t t = time(NULL);
+	return ((double) t) * 1000.0;
+}
+#endif  /* DUK_USE_DATE_NOW_TIME */
+
+#if defined(DUK_USE_DATE_TZO_GMTIME) || defined(DUK_USE_DATE_TZO_GMTIME_R)
 /* Get local time offset (in seconds) for a certain (UTC) instant 'd'. */
 static int get_local_tzoffset_gmtime(double d) {
 	time_t t, t1, t2;
 	int parts[NUM_PARTS];
 	double dparts[NUM_PARTS];
 	struct tm tms[2];
+#ifdef DUK_USE_DATE_TZO_GMTIME
+	struct tm *tm_ptr;
+#endif
 
 	/* For NaN/inf, the return value doesn't matter. */
-	if (!isfinite(d)) {
+	if (!DUK_ISFINITE(d)) {
 		return 0;
 	}
 
@@ -165,10 +178,18 @@ static int get_local_tzoffset_gmtime(double d) {
 
 	t1 = t;
 
-	memset((void *) tms, 0, sizeof(struct tm) * 2);
+	DUK_MEMSET((void *) tms, 0, sizeof(struct tm) * 2);
 
+#if defined(DUK_USE_DATE_TZO_GMTIME_R)
 	(void) gmtime_r(&t, &tms[0]);
-	memcpy((void *) &tms[1], &tms[0], sizeof(struct tm));
+#elif defined(DUK_USE_DATE_TZO_GMTIME)
+	tm_ptr = gmtime(&t);
+	DUK_MEMCPY((void *) &tms[0], tm_ptr, sizeof(struct tm));
+#else
+#error internal error
+#endif
+	DUK_MEMCPY((void *) &tms[1], &tms[0], sizeof(struct tm));
+
 	DUK_DDDPRINT("before mktime: tm={sec:%d,min:%d,hour:%d,mday:%d,mon:%d,year:%d,"
 	             "wday:%d,yday:%d,isdst:%d}",
 	             (int) tms[0].tm_sec, (int) tms[0].tm_min, (int) tms[0].tm_hour,
@@ -216,12 +237,12 @@ static int parse_string_strptime(duk_context *ctx, const char *str) {
 	char buf[STRPTIME_BUF_SIZE];
 
 	/* copy to buffer with spare to avoid Valgrind gripes from strptime */
-	memset(buf, 0, sizeof(buf));
-	snprintf(buf, sizeof(buf) - 1, "%s", str);
+	DUK_MEMSET(buf, 0, sizeof(buf));
+	DUK_SNPRINTF(buf, sizeof(buf) - 1, "%s", str);
 
 	DUK_DDDPRINT("parsing: '%s'", buf);
 
-	memset(&tm, 0, sizeof(tm));
+	DUK_MEMSET(&tm, 0, sizeof(tm));
 	if (strptime((const char *) buf, "%c", &tm) != NULL) {
 		DUK_DDDPRINT("before mktime: tm={sec:%d,min:%d,hour:%d,mday:%d,mon:%d,year:%d,"
 		             "wday:%d,yday:%d,isdst:%d}",
@@ -252,7 +273,7 @@ static int parse_string_getdate(duk_context *ctx, const char *str) {
 	 * convenient for an embeddable interpreter.
 	 */
 
-	memset(&tm, 0, sizeof(struct tm));
+	DUK_MEMSET(&tm, 0, sizeof(struct tm));
 	rc = getdate_r(str, &tm);
 	DUK_DDDPRINT("getdate_r() -> %d", rc);
 
@@ -289,7 +310,7 @@ static int format_parts_strftime(duk_context *ctx, int *parts, int tzoffset, int
 		return 0;
 	}
 
-	memset(&tm, 0, sizeof(tm));
+	DUK_MEMSET(&tm, 0, sizeof(tm));
 	tm.tm_sec = parts[IDX_SECOND];
 	tm.tm_min = parts[IDX_MINUTE];
 	tm.tm_hour = parts[IDX_HOUR];
@@ -299,7 +320,7 @@ static int format_parts_strftime(duk_context *ctx, int *parts, int tzoffset, int
 	tm.tm_wday = parts[IDX_WEEKDAY];
 	tm.tm_isdst = 0;
 
-	memset(buf, 0, sizeof(buf));
+	DUK_MEMSET(buf, 0, sizeof(buf));
 	if ((flags & FLAG_TOSTRING_DATE) && (flags & FLAG_TOSTRING_TIME)) {
 		fmt = "%c";
 	} else if (flags & FLAG_TOSTRING_DATE) {
@@ -422,7 +443,7 @@ static int parse_string_iso8601_subset(duk_context *ctx, const char *str) {
 	int i;
 
 	/* During parsing, month and day are one-based; set defaults here. */
-	memset(parts, 0, sizeof(parts));
+	DUK_MEMSET(parts, 0, sizeof(parts));
 	DUK_ASSERT(parts[IDX_YEAR] == 0);  /* don't care value, year is mandatory */
 	parts[IDX_MONTH] = 1;
 	parts[IDX_DAY] = 1;
@@ -657,12 +678,12 @@ static int is_leap_year(int year) {
 }
 
 static double timeclip(double x) {
-	if (!isfinite(x)) {
-		return NAN;
+	if (!DUK_ISFINITE(x)) {
+		return DUK_DOUBLE_NAN;
 	}
 
 	if (x > 8.64e15 || x < -8.64e15) {
-		return NAN;
+		return DUK_DOUBLE_NAN;
 	}
 
 	x = duk_js_tointeger_number(x);
@@ -740,8 +761,8 @@ static double make_day(double year, double month, double day) {
 	 * must return NaN or infinity to ensure time value becomes NaN.
 	 */
 
-	if (!isfinite(year) || !isfinite(month)) {
-		return NAN;
+	if (!DUK_ISFINITE(year) || !DUK_ISFINITE(month)) {
+		return DUK_DOUBLE_NAN;
 	}
 	
 	year += floor(month / 12);
@@ -787,8 +808,8 @@ static void timeval_to_parts(double d, int *parts, double *dparts, int flags) {
 	int i;
 	int is_leap;
 
-	DUK_ASSERT(isfinite(d));    /* caller checks */
-	DUK_ASSERT(floor(d) == d);  /* no fractions in internal time */
+	DUK_ASSERT(DUK_ISFINITE(d));    /* caller checks */
+	DUK_ASSERT(floor(d) == d);      /* no fractions in internal time */
 
 	/* these computations are guaranteed to be exact for the valid
 	 * E5 time value range, assuming milliseconds without fractions.
@@ -876,7 +897,7 @@ static double get_timeval_from_dparts(double *dparts, int flags) {
 	 */
 	for (i = 0; i <= IDX_MILLISECOND; i++) {
 		d = dparts[i];
-		if (isfinite(d)) {
+		if (DUK_ISFINITE(d)) {
 			dparts[i] = duk_js_tointeger_number(d);
 		}
 	}
@@ -949,7 +970,7 @@ static double push_this_and_get_timeval_tzoffset(duk_context *ctx, int flags, in
 	d = duk_to_number(ctx, -1);
 	duk_pop(ctx);
 
-	if (isnan(d)) {
+	if (DUK_ISNAN(d)) {
 		if (flags & FLAG_NAN_TO_ZERO) {
 			d = 0.0;
 		}
@@ -1008,19 +1029,19 @@ static int format_parts_iso8601(duk_context *ctx, int *parts, int tzoffset, int 
 	/* Note: %06d for positive value, %07d for negative value to include sign and
 	 * 6 digits.
 	 */
-	sprintf(yearstr,
-	        (parts[IDX_YEAR] >= 0 && parts[IDX_YEAR] <= 9999) ? "%04d" :
-		        ((parts[IDX_YEAR] >= 0) ? "+%06d" : "%07d"),
-	        parts[IDX_YEAR]);
+	DUK_SPRINTF(yearstr,
+	            (parts[IDX_YEAR] >= 0 && parts[IDX_YEAR] <= 9999) ? "%04d" :
+	                    ((parts[IDX_YEAR] >= 0) ? "+%06d" : "%07d"),
+	            parts[IDX_YEAR]);
 
 	if (flags_and_sep & FLAG_LOCALTIME) {
 		/* tzoffset seconds are dropped */
 		if (tzoffset >= 0) {
 			int tmp = tzoffset / 60;
-			sprintf(tzstr, "+%02d:%02d", tmp / 60, tmp % 60);
+			DUK_SPRINTF(tzstr, "+%02d:%02d", tmp / 60, tmp % 60);
 		} else {
 			int tmp = -tzoffset / 60;
-			sprintf(tzstr, "-%02d:%02d", tmp / 60, tmp % 60);
+			DUK_SPRINTF(tzstr, "-%02d:%02d", tmp / 60, tmp % 60);
 		}
 	} else {
 		tzstr[0] = 'Z';
@@ -1053,11 +1074,11 @@ static int to_string_helper(duk_context *ctx, int flags_and_sep) {
 	int rc;
 
 	d = push_this_and_get_timeval_tzoffset(ctx, flags_and_sep, &tzoffset);
-	if (isnan(d)) {
+	if (DUK_ISNAN(d)) {
 		duk_push_hstring_stridx(ctx, DUK_STRIDX_INVALID_DATE);
 		return 1;
 	}
-	DUK_ASSERT(isfinite(d));
+	DUK_ASSERT(DUK_ISFINITE(d));
 
 	/* formatters always get one-based month/day-of-month */
 	timeval_to_parts(d, parts, NULL, FLAG_ONEBASED);
@@ -1098,11 +1119,11 @@ static int get_part_helper(duk_context *ctx, int flags_and_idx) {
 	DUK_ASSERT(idx_part >= 0 && idx_part < NUM_PARTS);
 
 	d = push_this_and_get_timeval(ctx, flags_and_idx);
-	if (isnan(d)) {
+	if (DUK_ISNAN(d)) {
 		duk_push_nan(ctx);
 		return 1;
 	}
-	DUK_ASSERT(isfinite(d));
+	DUK_ASSERT(DUK_ISFINITE(d));
 
 	timeval_to_parts(d, parts, NULL, flags_and_idx);
 
@@ -1132,9 +1153,9 @@ static int set_part_helper(duk_context *ctx, int flags_and_maxnargs) {
 
 	nargs = duk_get_top(ctx);
 	d = push_this_and_get_timeval(ctx, flags_and_maxnargs);
-	DUK_ASSERT(isfinite(d) || isnan(d));
+	DUK_ASSERT(DUK_ISFINITE(d) || DUK_ISNAN(d));
 
-	if (isfinite(d)) {
+	if (DUK_ISFINITE(d)) {
 		timeval_to_parts(d, parts, dparts, flags_and_maxnargs);
 	} else {
 		/* NaN timevalue: we need to coerce the arguments, but
@@ -1201,7 +1222,7 @@ static int set_part_helper(duk_context *ctx, int flags_and_maxnargs) {
 	/* Leaves new timevalue on stack top and returns 1, which is correct
 	 * for part setters.
 	 */
-	if (isfinite(d)) {
+	if (DUK_ISFINITE(d)) {
 		return set_this_timeval_from_dparts(ctx, dparts, flags_and_maxnargs);
 	} else {
 		/* Internal timevalue is already NaN, so don't touch it. */
@@ -1410,7 +1431,7 @@ int duk_builtin_date_prototype_value_of(duk_context *ctx) {
 	 */
 
 	double d = push_this_and_get_timeval(ctx, 0 /*flags*/);  /* -> [ this ] */
-	DUK_ASSERT(isfinite(d) || isnan(d));
+	DUK_ASSERT(DUK_ISFINITE(d) || DUK_ISNAN(d));
 	duk_push_number(ctx, d);
 	return 1;
 }
@@ -1446,7 +1467,7 @@ int duk_builtin_date_prototype_to_json(duk_context *ctx) {
 	duk_to_primitive(ctx, -1, DUK_HINT_NUMBER);
 	if (duk_is_number(ctx, -1)) {
 		double d = duk_get_number(ctx, -1);
-		if (!isfinite(d)) {
+		if (!DUK_ISFINITE(d)) {
 			duk_push_null(ctx);
 			return 1;
 		}
@@ -1483,11 +1504,11 @@ int duk_builtin_date_prototype_get_timezone_offset(duk_context *ctx) {
 
 	/* Note: DST adjustment is determined using UTC time. */
 	d = push_this_and_get_timeval(ctx, 0 /*flags*/);
-	DUK_ASSERT(isfinite(d) || isnan(d));
-	if (isnan(d)) {
+	DUK_ASSERT(DUK_ISFINITE(d) || DUK_ISNAN(d));
+	if (DUK_ISNAN(d)) {
 		duk_push_nan(ctx);
 	} else {
-		DUK_ASSERT(isfinite(d));
+		DUK_ASSERT(DUK_ISFINITE(d));
 		tzoffset = GET_LOCAL_TZOFFSET(d);
 		duk_push_int(ctx, -tzoffset / 60);
 	}

@@ -5,8 +5,6 @@
 #ifndef DUK_ERROR_H_INCLUDED
 #define DUK_ERROR_H_INCLUDED
 
-#include "duk_misc.h"
-
 /*
  *  Error codes (defined in duktape.h)
  *
@@ -56,9 +54,9 @@
 #ifdef DUK_USE_VARIADIC_MACROS
 
 /* __VA_ARGS__ has comma issues for empty lists, so we mandate at least 1 argument for '...' (format string) */
-#define  DUK_ERROR(thr,err,...)                    duk_err_handle_error(__FILE__, (int) __LINE__, (thr), (err), __VA_ARGS__)
+#define  DUK_ERROR(thr,err,...)                    duk_err_handle_error(DUK_FILE_MACRO, (int) DUK_LINE_MACRO, (thr), (err), __VA_ARGS__)
 #define  DUK_ERROR_RAW(file,line,thr,err,...)      duk_err_handle_error((file), (line), (thr), (err), __VA_ARGS__)
-#define  DUK_PANIC(err,...)                        duk_err_handle_panic(__FILE__, __LINE__, (err), __VA_ARGS__)
+#define  DUK_PANIC(err,...)                        duk_err_handle_panic(DUK_FILE_MACRO, DUK_LINE_MACRO, (err), __VA_ARGS__)
 #define  DUK_PANIC_RAW(file,line,err,...)          duk_err_handle_panic((file), (line), (err), __VA_ARGS__)
 
 #else  /* DUK_USE_VARIADIC_MACROS */
@@ -68,14 +66,14 @@
  */
 
 #define  DUK_ERROR  \
-	duk_err_file_stash = (const char *) __FILE__, \
-	duk_err_line_stash = (int) __LINE__, \
-	(void) duk_err_handle_error_stash
+	duk_err_file_stash = (const char *) DUK_FILE_MACRO, \
+	duk_err_line_stash = (int) DUK_LINE_MACRO, \
+	(void) duk_err_handle_error_stash  /* arguments follow */
 #define  DUK_ERROR_RAW                             duk_err_handle_error
 #define  DUK_PANIC  \
-	duk_err_file_stash = (const char *) __FILE__, \
-	duk_err_line_stash = (int) __LINE__, \
-	(void) duk_err_handle_panic_stash
+	duk_err_file_stash = (const char *) DUK_FILE_MACRO, \
+	duk_err_line_stash = (int) DUK_LINE_MACRO, \
+	(void) duk_err_handle_panic_stash  /* arguments follow */
 #define  DUK_PANIC_RAW                             duk_err_handle_panic
 
 #endif  /* DUK_USE_VARIADIC_MACROS */
@@ -118,7 +116,7 @@
 	if (!(x)) { \
 		DUK_PANIC(DUK_ERR_ASSERTION_ERROR, \
 			"assertion failed: " #x \
-			" (" __FILE__ ":" DUK_MACRO_STRINGIFY(__LINE__) ")"); \
+			" (" DUK_FILE_MACRO ":" DUK_MACRO_STRINGIFY(DUK_LINE_MACRO) ")"); \
 	} \
 	} while (0)
 
@@ -146,6 +144,11 @@
 #ifdef DUK_PANIC_HANDLER
 /* already defined, good */
 #else
+#if 1
+#define  DUK_PANIC_EXIT()  abort()
+#else
+#define  DUK_PANIC_EXIT()  exit(-1)
+#endif
 #ifdef DUK_USE_GCC_PRAGMAS
 #define  DUK_PANIC_HANDLER(code,msg)  do { \
 		/* GCC pragmas to suppress: warning: the address of 'xxx' will always evaluate as 'true' [-Waddress]' */ \
@@ -153,7 +156,7 @@
 		_Pragma("GCC diagnostic ignored \"-Waddress\""); \
 		fprintf(stderr, "PANIC %d: %s\n", code, msg ? msg : "null"); \
 		fflush(stderr); \
-		exit(-1); \
+		DUK_PANIC_EXIT(); \
 		_Pragma("GCC diagnostic pop"); \
 	} while (0)
 #else
@@ -161,7 +164,7 @@
 		/* No pragmas to suppress warning, causes unclean build */ \
 		fprintf(stderr, "PANIC %d: %s\n", code, msg ? msg : "null"); \
 		fflush(stderr); \
-		exit(-1); \
+		DUK_PANIC_EXIT(); \
 	} while (0)
 #endif
 #endif
@@ -243,7 +246,7 @@ void duk_err_create_and_throw(duk_hthread *thr, duk_u32 code);
 void duk_error_throw_from_negative_rc(duk_hthread *thr, int rc);
 
 #ifdef DUK_USE_AUGMENT_ERRORS
-void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err_index);
+void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err_index, const char *filename, int line);
 #endif
 
 void duk_err_longjmp(duk_hthread *thr);

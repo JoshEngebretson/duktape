@@ -7,6 +7,7 @@ such as:
 
 * Conventions
 * Portability concerns
+* Specific platforms and compilers
 * Size and performance optimization issues
 
 Conventions
@@ -33,6 +34,16 @@ Names are lowercase, underscore separated::
 Macros are uppercase, underscore separated::
 
   #define  DUK_MACRO(x)  /* ... */
+
+Macro names must not begin with an underscore.  Macros which are of local
+interest only can have a local name or have a double underscore after "DUK"::
+
+  /* 'foo' alternatives, not to be used directly */
+  #define  DUK__FOO_ALT1  /* ... */
+  #define  DUK__FOO_ALT2  /* ... */
+
+  /* select DUK_FOO provider */
+  #define  DUK_FOO  DUK_FOO_ALT2
 
 Comments are always traditional C comments, never ``//``::
 
@@ -130,4 +141,133 @@ This seems to work with both GCC and Clang.  The form::
   my_unused_var = my_unused_var;  /* suppress warning */
 
 works with GCC but not with Clang.
+
+C++ compatibility
+-----------------
+
+The source code is meant to be C++ compatible so that you can both:
+
+1. Compile Duktape with C but use it from C++.
+
+2. Compile Duktape with C++ and use it from C++.
+
+To achieve this:
+
+* Avoid variable names conflicting with C++ keywords (``throw``,
+  ``class``, ``this``, etc).
+
+* Use explicit casts for all pointer conversions.
+
+Portability concerns
+====================
+
+Types
+-----
+
+* Availability of C99 types varies
+
+* Currently we also need exact 32-bit types (e.g. number conversion
+  32-bit arithmetic relies on exact unsigned overflows / underflows)
+
+**FIXME: C type usage is not consistent right now, and "int" is expected
+to be 32 bits which is not necessarily true even on platforms which support
+a 32-bit type.**
+
+Alignment
+---------
+
+Platforms vary in their alignment requirements:
+
+* Some platforms cause an error ("bus error") when alignment requirements
+  are violated.  Such platforms may have unaligned access instructions but
+  unaligned accesses may need to be flagged to the compiler.
+
+* Some platforms have slower unaligned accesses but which behave externally
+  just like aligned accesses.  "Slower" may mean that an interrupt / trap
+  handler is invoked, at a considerable penalty.
+
+* Some platforms support aligned and unaligned accesses with more or less
+  the same performance.
+
+Alignment level may also vary, e.g. platform may require 4-byte alignment
+for both 32-bit integers and IEEE doubles, or it may require 4-byte alignment
+for 32-bit integers but 8-byte alignment for doubles, etc.
+
+**FIXME: alignment is now guaranteed to 4 bytes on platforms where unaligned
+accesses are not allowed/preferable.**
+
+64-bit arithmetic
+-----------------
+
+Some compilers on 32-bit platforms may have 64-bit arithmetic problems
+(this seems to be the case with VBCC for example).  There are also older
+compiles with no 64-bit support at all.
+
+Duktape must compile with only 32-bit operations, so replacements are
+needed in the few places where 32 bits are not enough.
+
+Integer overflows
+-----------------
+
+Signed integer overflows are undefined behavior:
+
+* https://www.securecoding.cert.org/confluence/display/seccode/INT32-C.+Ensure+that+operations+on+signed+integers+do+not+result+in+overflow?showComments=false
+
+At least unsigned overflow handling is important, as it is needed to make
+"add with carry" etc convenient.
+
+Platforms and compilers
+=======================
+
+VBCC
+----
+
+Even in C99 mode VBCC 0.9b:
+
+* Does not have ``inttypes.h``.
+
+* Does not have ``fpclassify()`` and friends.
+
+* Does not have ``NAN`` or ``INFINITY``.
+
+* The expression ``0.0 / 0.0`` causes a warning and results in ``0.0``
+  instead of ``NaN`` as expected.
+
+* The expression ``1.0 / 0.0`` causes a warning and results in ``0.0``
+  instead of infinity as expected.
+
+The following program demonstrates the NaN issue::
+
+  #include <stdio.h>
+
+  void main(void) {
+      double z = 0.0;
+      double t;
+      volatile union {
+          double d;
+          unsigned char b[8];
+      } u;
+      int i;
+  
+      /* this results in 0.0 */
+      t = 0.0 / 0.0;
+      printf("result: %lf\n", t);
+  
+      /* this results in NaN */
+      t = z / z;
+      printf("result: %lf\n", t);
+      
+      u.d = t;
+      for (i = 0; i < 8; i++) {
+          printf("%02x\n", u.b[i]);
+      }
+  }
+
+To work with compiler optimization, the above approach needs to have the
+``double`` values in ``volatile`` variables.  Otherwise VBCC will end up
+replacing the result with zero.  So something like this is probably safest::
+
+  volatile double a = 0.0;
+  volatile double b = 0.0;
+  double t = a / b;  /* -> NaN */
 

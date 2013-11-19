@@ -25,11 +25,11 @@ int duk_hthread_init_stacks(duk_heap *heap, duk_hthread *thr) {
 
 	/* valstack */
 	alloc_size = sizeof(duk_tval) * DUK_VALSTACK_INITIAL_SIZE;
-	thr->valstack = DUK_ALLOC(heap, alloc_size);
+	thr->valstack = (duk_tval *) DUK_ALLOC(heap, alloc_size);
 	if (!thr->valstack) {
 		goto fail;
 	}
-	memset(thr->valstack, 0, alloc_size);
+	DUK_MEMSET(thr->valstack, 0, alloc_size);
 	thr->valstack_end = thr->valstack + DUK_VALSTACK_INITIAL_SIZE;
 	thr->valstack_bottom = thr->valstack;
 	thr->valstack_top = thr->valstack;
@@ -40,21 +40,21 @@ int duk_hthread_init_stacks(duk_heap *heap, duk_hthread *thr) {
 
 	/* callstack */
 	alloc_size = sizeof(duk_activation) * DUK_CALLSTACK_INITIAL_SIZE;
-	thr->callstack = DUK_ALLOC(heap, alloc_size);
+	thr->callstack = (duk_activation *) DUK_ALLOC(heap, alloc_size);
 	if (!thr->callstack) {
 		goto fail;
 	}
-	memset(thr->callstack, 0, alloc_size);
+	DUK_MEMSET(thr->callstack, 0, alloc_size);
 	thr->callstack_size = DUK_CALLSTACK_INITIAL_SIZE;
 	DUK_ASSERT(thr->callstack_top == 0);
 
 	/* catchstack */
 	alloc_size = sizeof(duk_catcher) * DUK_CATCHSTACK_INITIAL_SIZE;
-	thr->catchstack = DUK_ALLOC(heap, alloc_size);
+	thr->catchstack = (duk_catcher *) DUK_ALLOC(heap, alloc_size);
 	if (!thr->catchstack) {
 		goto fail;
 	}
-	memset(thr->catchstack, 0, alloc_size);
+	DUK_MEMSET(thr->catchstack, 0, alloc_size);
 	thr->catchstack_size = DUK_CATCHSTACK_INITIAL_SIZE;
 	DUK_ASSERT(thr->catchstack_top == 0);
 

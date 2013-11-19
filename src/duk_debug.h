@@ -8,17 +8,11 @@
 #ifndef DUK_DEBUG_H_INCLUDED
 #define DUK_DEBUG_H_INCLUDED
 
-#include "duk_features.h"  /* rely on DUK_USE_VARIADIC_MACROS */
-#include "duk_bittypes.h"
-#include "duk_forwdecl.h"
-
 #ifdef DUK_USE_DEBUG
 
 /*
  *  Exposed debug macros: debugging enabled
  */
-
-#include <stdarg.h>
 
 #define  DUK_LEVEL_DEBUG    1
 #define  DUK_LEVEL_DDEBUG   2
@@ -29,47 +23,47 @@
 /* Note: combining __FILE__, __LINE__, and __func__ into fmt would be
  * possible compile time, but waste some space with shared function names.
  */
-#define  _DUK_DEBUG_LOG(lev,...)  duk_debug_log((lev), __FILE__, (int) __LINE__, __func__, __VA_ARGS__);
+#define  DUK__DEBUG_LOG(lev,...)  duk_debug_log((lev), DUK_FILE_MACRO, (int) DUK_LINE_MACRO, DUK_FUNC_MACRO, __VA_ARGS__);
 
-#define  DUK_DPRINT(...)          _DUK_DEBUG_LOG(DUK_LEVEL_DEBUG, __VA_ARGS__)
+#define  DUK_DPRINT(...)          DUK__DEBUG_LOG(DUK_LEVEL_DEBUG, __VA_ARGS__)
 
 #ifdef DUK_USE_DDEBUG
-#define  DUK_DDPRINT(...)         _DUK_DEBUG_LOG(DUK_LEVEL_DDEBUG, __VA_ARGS__)
+#define  DUK_DDPRINT(...)         DUK__DEBUG_LOG(DUK_LEVEL_DDEBUG, __VA_ARGS__)
 #else
 #define  DUK_DDPRINT(...)
 #endif
 
 #ifdef DUK_USE_DDDEBUG
-#define  DUK_DDDPRINT(...)        _DUK_DEBUG_LOG(DUK_LEVEL_DDDEBUG, __VA_ARGS__)
+#define  DUK_DDDPRINT(...)        DUK__DEBUG_LOG(DUK_LEVEL_DDDEBUG, __VA_ARGS__)
 #else
 #define  DUK_DDDPRINT(...)
 #endif
 
 #else  /* DUK_USE_VARIADIC_MACROS */
 
-#define  _DUK_DEBUG_STASH(lev)    \
-	(void) memset((void *) duk_debug_file_stash, 0, (size_t) DUK_DEBUG_STASH_SIZE), \
-	(void) memset((void *) duk_debug_line_stash, 0, (size_t) DUK_DEBUG_STASH_SIZE), \
-	(void) memset((void *) duk_debug_func_stash, 0, (size_t) DUK_DEBUG_STASH_SIZE), \
-	(void) snprintf(duk_debug_file_stash, DUK_DEBUG_STASH_SIZE - 1, "%s", __FILE__), \
-	(void) snprintf(duk_debug_line_stash, DUK_DEBUG_STASH_SIZE - 1, "%d", (int) __LINE__), \
-	(void) snprintf(duk_debug_func_stash, DUK_DEBUG_STASH_SIZE - 1, "%s", __func__), \
+#define  DUK__DEBUG_STASH(lev)    \
+	(void) DUK_MEMSET((void *) duk_debug_file_stash, 0, (size_t) DUK_DEBUG_STASH_SIZE), \
+	(void) DUK_MEMSET((void *) duk_debug_line_stash, 0, (size_t) DUK_DEBUG_STASH_SIZE), \
+	(void) DUK_MEMSET((void *) duk_debug_func_stash, 0, (size_t) DUK_DEBUG_STASH_SIZE), \
+	(void) DUK_SNPRINTF(duk_debug_file_stash, DUK_DEBUG_STASH_SIZE - 1, "%s", DUK_FILE_MACRO), \
+	(void) DUK_SNPRINTF(duk_debug_line_stash, DUK_DEBUG_STASH_SIZE - 1, "%d", (int) DUK_LINE_MACRO), \
+	(void) DUK_SNPRINTF(duk_debug_func_stash, DUK_DEBUG_STASH_SIZE - 1, "%s", DUK_FUNC_MACRO), \
 	(void) (duk_debug_level_stash = (lev))
 
 #ifdef DUK_USE_DEBUG
-#define  DUK_DPRINT  _DUK_DEBUG_STASH(DUK_LEVEL_DEBUG), (void) duk_debug_log  /* args go here in parens */
+#define  DUK_DPRINT  DUK__DEBUG_STASH(DUK_LEVEL_DEBUG), (void) duk_debug_log  /* args go here in parens */
 #else
 #define  DUK_DPRINT  0 && 
 #endif
 
 #ifdef DUK_USE_DDEBUG
-#define  DUK_DDPRINT  _DUK_DEBUG_STASH(DUK_LEVEL_DDEBUG), (void) duk_debug_log  /* args go here in parens */
+#define  DUK_DDPRINT  DUK__DEBUG_STASH(DUK_LEVEL_DDEBUG), (void) duk_debug_log  /* args go here in parens */
 #else
 #define  DUK_DDPRINT  0 && 
 #endif
 
 #ifdef DUK_USE_DDDEBUG
-#define  DUK_DDDPRINT  _DUK_DEBUG_STASH(DUK_LEVEL_DDDEBUG), (void) duk_debug_log  /* args go here in parens */
+#define  DUK_DDDPRINT  DUK__DEBUG_STASH(DUK_LEVEL_DDDEBUG), (void) duk_debug_log  /* args go here in parens */
 #else
 #define  DUK_DDDPRINT  0 && 
 #endif
@@ -90,7 +84,7 @@
 /* summary macros */
 
 #define  DUK_DEBUG_SUMMARY_INIT()  do { \
-		memset(duk_debug_summary_buf, 0, sizeof(duk_debug_summary_buf)); \
+		DUK_MEMSET(duk_debug_summary_buf, 0, sizeof(duk_debug_summary_buf)); \
 		duk_debug_summary_idx = 0; \
 	} while (0)
 
@@ -179,7 +173,7 @@ extern void duk_debug_log(char *fmt, ...);
 
 void duk_fb_put_bytes(duk_fixedbuffer *fb, duk_u8 *buffer, duk_u32 length);
 void duk_fb_put_byte(duk_fixedbuffer *fb, duk_u8 x);
-void duk_fb_put_cstring(duk_fixedbuffer *fb, char *x);
+void duk_fb_put_cstring(duk_fixedbuffer *fb, const char *x);
 void duk_fb_sprintf(duk_fixedbuffer *fb, const char *fmt, ...);
 int duk_fb_is_full(duk_fixedbuffer *fb);
 

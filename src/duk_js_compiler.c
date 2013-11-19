@@ -32,13 +32,18 @@
 /* FIXME: hack, remove when const lookup is not O(n) */
 #define  GETCONST_MAX_CONSTS_CHECK    256
 
+/* these limits are based on bytecode limits */
+#define  MAX_CONSTS       (DUK_BC_BC_MAX + 1)
+#define  MAX_FUNCS        (DUK_BC_BC_MAX + 1)
+#define  MAX_TEMPS        (DUK_BC_BC_MAX + 1)
+
 #define  RECURSION_INCREASE(comp_ctx,thr)  do { \
-		DUK_DDDPRINT("RECURSION INCREASE: %s:%d", __FILE__, __LINE__); \
+		DUK_DDDPRINT("RECURSION INCREASE: %s:%d", DUK_FILE_MACRO, DUK_LINE_MACRO); \
 		recursion_increase((comp_ctx)); \
 	} while(0)
 
 #define  RECURSION_DECREASE(comp_ctx,thr)  do { \
-		DUK_DDDPRINT("RECURSION DECREASE: %s:%d", __FILE__, __LINE__); \
+		DUK_DDDPRINT("RECURSION DECREASE: %s:%d", DUK_FILE_MACRO, DUK_LINE_MACRO); \
 		recursion_decrease((comp_ctx)); \
 	} while(0)
 
@@ -82,6 +87,7 @@ static void emit_a_bc(duk_compiler_ctx *comp_ctx, int op, int a, int bc);
 static void emit_abc(duk_compiler_ctx *comp_ctx, int op, int abc);
 static void emit_extraop_b_c(duk_compiler_ctx *comp_ctx, int extraop, int b, int c);
 static void emit_extraop_b(duk_compiler_ctx *comp_ctx, int extraop, int b);
+static void emit_extraop_bc(duk_compiler_ctx *comp_ctx, int extraop, int bc);
 static void emit_extraop_only(duk_compiler_ctx *comp_ctx, int extraop);
 static void emit_loadint(duk_compiler_ctx *comp_ctx, int reg, int val);
 static void emit_jump(duk_compiler_ctx *comp_ctx, int target_pc);
@@ -411,7 +417,7 @@ static void advance_helper(duk_compiler_ctx *comp_ctx, int expect) {
 	}
 
 	/* make current token the previous; need to fiddle with valstack "backing store" */
-	memcpy(&comp_ctx->prev_token, &comp_ctx->curr_token, sizeof(duk_token));
+	DUK_MEMCPY(&comp_ctx->prev_token, &comp_ctx->curr_token, sizeof(duk_token));
 	duk_dup(ctx, comp_ctx->tok11_idx);
 	duk_replace(ctx, comp_ctx->tok21_idx);
 	duk_dup(ctx, comp_ctx->tok12_idx);
@@ -464,7 +470,7 @@ static void init_function_valstack_slots(duk_compiler_ctx *comp_ctx) {
 
 	entry_top = duk_get_top(ctx);
 
-	memset(func, 0, sizeof(*func));  /* intentional overlap with earlier memzero */
+	DUK_MEMSET(func, 0, sizeof(*func));  /* intentional overlap with earlier memzero */
 #ifdef DUK_USE_EXPLICIT_NULL_INIT
 	func->h_name = NULL;
 	func->h_code = NULL;
@@ -772,7 +778,7 @@ static void convert_to_function_template(duk_compiler_ctx *comp_ctx) {
 		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_FORMALS, DUK_PROPDESC_FLAGS_NONE);
 	}
 
-	/* _name */
+	/* name */
 	if (func->h_name) {
 		duk_push_hstring(ctx, func->h_name);
 		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_NAME, DUK_PROPDESC_FLAGS_NONE);
@@ -831,14 +837,14 @@ static void convert_to_function_template(duk_compiler_ctx *comp_ctx) {
 		 */
 	}
 
-	/* _filename */
+	/* fileName */
 	if (comp_ctx->h_filename) {
 		/*
 		 *  Source filename (or equivalent), for identifying thrown errors.
 		 */
 
 		duk_push_hstring(ctx, comp_ctx->h_filename);
-		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_INT_FILENAME, DUK_PROPDESC_FLAGS_NONE);
+		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_FILE_NAME, DUK_PROPDESC_FLAGS_NONE);
 	}
 
 	/*
@@ -1005,6 +1011,11 @@ static void emit_extraop_b_c(duk_compiler_ctx *comp_ctx, int extraop, int b, int
 static void emit_extraop_b(duk_compiler_ctx *comp_ctx, int extraop, int b) {
 	DUK_ASSERT(extraop >= DUK_BC_EXTRAOP_MIN && extraop <= DUK_BC_EXTRAOP_MAX);
 	emit_a_b_c(comp_ctx, DUK_OP_EXTRA, extraop, b, 0);
+}
+
+static void emit_extraop_bc(duk_compiler_ctx *comp_ctx, int extraop, int bc) {
+	DUK_ASSERT(extraop >= DUK_BC_EXTRAOP_MIN && extraop <= DUK_BC_EXTRAOP_MAX);
+	emit_a_bc(comp_ctx, DUK_OP_EXTRA, extraop, bc);
 }
 
 static void emit_extraop_only(duk_compiler_ctx *comp_ctx, int extraop) {
@@ -1184,6 +1195,7 @@ static void peephole_optimize_bytecode(duk_compiler_ctx *comp_ctx) {
  */
 
 #define  ISREG(comp_ctx,x)              (((x) & CONST_MARKER) == 0)
+#define  ISCONST(comp_ctx,x)            (((x) & CONST_MARKER) != 0)
 #define  ISTEMP(comp_ctx,x)             (ISREG((comp_ctx), (x)) && (x) >= ((comp_ctx)->curr_func.temp_first))
 #define  GETTEMP(comp_ctx)              ((comp_ctx)->curr_func.temp_next)
 #define  SETTEMP(comp_ctx,x)            ((comp_ctx)->curr_func.temp_next = (x))  /* dangerous: must only lower (temp_max not updated) */
@@ -1223,7 +1235,7 @@ static void copy_ivalue(duk_compiler_ctx *comp_ctx, duk_ivalue *src, duk_ivalue 
 static int is_whole_get_i32(double x, duk_i32 *ival) {
 	duk_i32 t;
 
-	if (fpclassify(x) != FP_NORMAL) {
+	if (DUK_FPCLASSIFY(x) != DUK_FP_NORMAL) {
 		return 0;
 	}
 
@@ -1243,10 +1255,15 @@ static int alloctemps(duk_compiler_ctx *comp_ctx, int num) {
 	comp_ctx->curr_func.temp_next += num;
 
 	/* FIXME: placeholder, catches most cases */
+#if 1
 	if (comp_ctx->curr_func.temp_next > 256) { /* 256 is OK */
-		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of temp regs");
+		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of temps");
 	}
-
+#else
+	if (comp_ctx->curr_func.temp_next > MAX_TEMPS) {  /* == MAX_TEMPS is OK */
+		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of temps");
+	}
+#endif
 	/* maintain highest 'used' temporary, needed to figure out nregs of function */
 	if (comp_ctx->curr_func.temp_next > comp_ctx->curr_func.temp_max) {
 		comp_ctx->curr_func.temp_max = comp_ctx->curr_func.temp_next;
@@ -1297,9 +1314,15 @@ static int getconst(duk_compiler_ctx *comp_ctx) {
 	}
 
 	/* FIXME: placeholder, catches most cases */
+#if 1
 	if (n > 255) { /* 255 is OK */
 		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of consts");
 	}
+#else
+	if (n >= MAX_CONSTS) {
+		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of consts");
+	}
+#endif
 
 	DUK_DDDPRINT("allocating new constant for %!T -> const index %d", tv1, n);
 	(void) duk_put_prop_index(ctx, f->consts_idx, n);  /* invalidates tv1, tv2 */
@@ -1349,17 +1372,19 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 			 * the 'void' operator.
 			 */
 			int dest = (forced_reg >= 0 ? forced_reg : ALLOCTEMP(comp_ctx));
-			emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDUNDEF, dest, 0);
+			emit_extraop_bc(comp_ctx, DUK_EXTRAOP_LDUNDEF, dest);
 			return dest; 
 		}
 		case DUK_TAG_NULL: {
 			int dest = (forced_reg >= 0 ? forced_reg : ALLOCTEMP(comp_ctx));
-			emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDNULL, dest, 0);
+			emit_extraop_bc(comp_ctx, DUK_EXTRAOP_LDNULL, dest);
 			return dest;
 		}
 		case DUK_TAG_BOOLEAN: {
 			int dest = (forced_reg >= 0 ? forced_reg : ALLOCTEMP(comp_ctx));
-			emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDBOOL, dest, DUK_TVAL_GET_BOOLEAN(tv));
+			emit_extraop_bc(comp_ctx,
+			                (DUK_TVAL_GET_BOOLEAN(tv) ? DUK_EXTRAOP_LDTRUE : DUK_EXTRAOP_LDFALSE),
+			                dest);
 			return dest;
 		}
 		case DUK_TAG_POINTER: {
@@ -1614,7 +1639,7 @@ static void ivalue_toplain_raw(duk_compiler_ctx *comp_ctx, duk_ivalue *x, int fo
 			x->x1.regconst = reg_varbind;
 		} else {
 			dest = (forced_reg >= 0 ? forced_reg : ALLOCTEMP(comp_ctx));
-			emit_a_b(comp_ctx, DUK_OP_GETVAR, dest, reg_varname);
+			emit_a_bc(comp_ctx, DUK_OP_GETVAR, dest, reg_varname);
 			x->t = DUK_IVAL_PLAIN;
 			x->x1.t = DUK_ISPEC_REGCONST;
 			x->x1.regconst = dest;
@@ -2666,7 +2691,7 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 			duk_dup(ctx, res->x1.valstack_idx);
 			if (lookup_lhs(comp_ctx, &reg_varbind, &reg_varname)) {
 				/* register bound variables are non-configurable -> always false */
-				emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDBOOL, reg_temp, 0);
+				emit_extraop_bc(comp_ctx, DUK_EXTRAOP_LDFALSE, reg_temp);
 			} else {
 				duk_dup(ctx, res->x1.valstack_idx);
 				reg_varname = getconst(comp_ctx);
@@ -2842,9 +2867,9 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 				emit_a_b(comp_ctx, args_op, reg_varbind, reg_varbind);
 				emit_a_bc(comp_ctx, DUK_OP_LDREG, reg_res, reg_varbind);
 			} else {
-				emit_a_b(comp_ctx, DUK_OP_GETVAR, reg_res, reg_varname);
+				emit_a_bc(comp_ctx, DUK_OP_GETVAR, reg_res, reg_varname);
 				emit_a_b(comp_ctx, args_op, reg_res, reg_res);
-				emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0, reg_varname, reg_res);
+				emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_res, reg_varname);
 			}
 
 			DUK_DDDPRINT("postincdec to '%!O' -> reg_varbind=%d, reg_varname=%d",
@@ -3432,7 +3457,7 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 				if (reg_varbind >= 0) {
 					emit_a_b_c(comp_ctx, args_op, reg_temp, reg_varbind, res->x1.regconst);
 				} else {
-					emit_a_b(comp_ctx, DUK_OP_GETVAR, reg_temp, reg_varname);
+					emit_a_bc(comp_ctx, DUK_OP_GETVAR, reg_temp, reg_varname);
 					emit_a_b_c(comp_ctx, args_op, reg_temp, reg_temp, res->x1.regconst);
 				}
 				reg_res = reg_temp;
@@ -3441,7 +3466,19 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 			if (reg_varbind >= 0) {
 				emit_a_bc(comp_ctx, DUK_OP_LDREG, reg_varbind, reg_res);
 			} else {
-				emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0, reg_varname, reg_res);
+				/* Only a reg fits into 'A' and reg_res may be a const in
+				 * straight assignment.
+				 *
+				 * XXX: here the current A/B/C split is suboptimal: we could
+				 * just use 9 bits for reg_res (and support constants) and 17
+				 * instead of 18 bits for the varname const index.
+				 */
+				if (ISCONST(comp_ctx, reg_res)) {
+					reg_temp = ALLOCTEMP(comp_ctx);
+					emit_a_bc(comp_ctx, DUK_OP_LDCONST, reg_temp, reg_res);
+					reg_res = reg_temp;
+				}
+				emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_res, reg_varname);
 			}
 
 			res->t = DUK_IVAL_PLAIN;
@@ -3548,10 +3585,10 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 				emit_a_b(comp_ctx, args_op, reg_varbind, reg_res);
 			} else {
 				int reg_temp = ALLOCTEMP(comp_ctx);
-				emit_a_b(comp_ctx, DUK_OP_GETVAR, reg_res, reg_varname);
+				emit_a_bc(comp_ctx, DUK_OP_GETVAR, reg_res, reg_varname);
 				emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_TONUM, reg_res, reg_res);
 				emit_a_b(comp_ctx, args_op, reg_temp, reg_res);
-				emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0, reg_varname, reg_temp);
+				emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_temp, reg_varname);
 			}
 
 			DUK_DDDPRINT("postincdec to '%!O' -> reg_varbind=%d, reg_varname=%d",
@@ -3650,7 +3687,7 @@ static void expr(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int rbp_flags) {
 	DUK_DDDPRINT("expr(), rbp_flags=%d, rbp=%d, allow_in=%d, paren_level=%d",
 	             rbp_flags, rbp, comp_ctx->curr_func.allow_in, comp_ctx->curr_func.paren_level);
 
-	memset(&tmp_alloc, 0, sizeof(tmp_alloc));
+	DUK_MEMSET(&tmp_alloc, 0, sizeof(tmp_alloc));
 	tmp->x1.valstack_idx = duk_get_top(ctx);
 	tmp->x2.valstack_idx = tmp->x1.valstack_idx + 1;
 	duk_push_undefined(ctx);
@@ -3888,7 +3925,7 @@ static void parse_variable_declaration(duk_compiler_ctx *comp_ctx, duk_ivalue *r
 		} else {
 			int reg_val;
 			reg_val = ivalue_toreg(comp_ctx, res);
-			emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0, reg_varname, reg_val);
+			emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_val, reg_varname);
 		}
 	}
 
@@ -3985,7 +4022,7 @@ static void parse_for_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int
 			if (reg_varbind >= 0) {
 				emit_a_bc(comp_ctx, DUK_OP_LDREG, reg_varbind, reg_temps + 0);
 			} else {
-				emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0, reg_varname, reg_temps + 0);
+				emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_temps + 0, reg_varname);
 			}
 			goto parse_3_or_4;
 		} else {
@@ -4037,7 +4074,7 @@ static void parse_for_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int
 				if (lookup_lhs(comp_ctx, &reg_varbind, &reg_varname)) {
 					emit_a_bc(comp_ctx, DUK_OP_LDREG, reg_varbind, reg_temps + 0);
 				} else {
-					emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0, reg_varname, reg_temps + 0);
+					emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_temps + 0, reg_varname);
 				}
 			} else if (res->t == DUK_IVAL_PROP) {
 				/* Don't allow a constant for the object (even for a number etc), as
@@ -4658,7 +4695,7 @@ static void parse_throw_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 	    comp_ctx->curr_token.allow_auto_semi) {         /* automatic semi will be inserted */
 		DUK_DDDPRINT("empty throw value -> undefined");
 		reg_val = ALLOCTEMP(comp_ctx);
-		emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDUNDEF, reg_val, 0);
+		emit_extraop_bc(comp_ctx, DUK_EXTRAOP_LDUNDEF, reg_val);
 	} else {
 		DUK_DDDPRINT("throw with a value");
 
@@ -4792,7 +4829,7 @@ static void parse_try_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 		duk_push_null(ctx);
 		duk_put_prop(ctx, comp_ctx->curr_func.varmap_idx);
 
-		emit_a_b_c(comp_ctx, DUK_OP_PUTVAR, 0 /*unused */, const_varname /*varname*/, reg_catch + 0 /*value*/);
+		emit_a_bc(comp_ctx, DUK_OP_PUTVAR, reg_catch + 0 /*value*/, const_varname /*varname*/);
 
 		DUK_DDDPRINT("varmap before parsing catch clause: %!iT", duk_get_tval(ctx, comp_ctx->curr_func.varmap_idx));
 
@@ -5283,7 +5320,7 @@ static void parse_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int all
 				 */
 
 				if (DUK_HSTRING_GET_BYTELEN(h_dir) == 10 &&
-				    strncmp((const char *) DUK_HSTRING_GET_DATA(h_dir), "use strict", 10) == 0) {
+				    DUK_STRNCMP((const char *) DUK_HSTRING_GET_DATA(h_dir), "use strict", 10) == 0) {
 					DUK_DDDPRINT("use strict directive detected: strict flag %d -> %d",
 					             comp_ctx->curr_func.is_strict, 1);
 					comp_ctx->curr_func.is_strict = 1;
@@ -5416,7 +5453,7 @@ static void parse_statements(duk_compiler_ctx *comp_ctx, int allow_source_elem, 
 	 * for nested functions (which may occur inside expressions).
 	 */
 
-	memset(&res_alloc, 0, sizeof(res_alloc));
+	DUK_MEMSET(&res_alloc, 0, sizeof(res_alloc));
 	res->t = DUK_IVAL_PLAIN;
 	res->x1.t = DUK_ISPEC_VALUE;
 	res->x1.valstack_idx = duk_get_top(ctx);
@@ -5468,6 +5505,12 @@ static void parse_statements(duk_compiler_ctx *comp_ctx, int allow_source_elem, 
  *  to be tracked for detecting duplicates.  Currently such identifiers
  *  are put into the varmap with a 'null' value, which is later cleaned up.
  *
+ *  To support functions with a large number of variable and function
+ *  declarations, registers are not allocated beyond a certain limit;
+ *  after that limit, variables and functions need slow path access.
+ *  Arguments are currently always register bound, which imposes a hard
+ *  (and relatively small) argument count limit.
+ *
  *  Some bindings in E5 are not configurable (= deletable) and almost all
  *  are mutable (writable).  Exceptions are:
  * 
@@ -5512,10 +5555,13 @@ static void init_varmap_and_prologue_for_pass2(duk_compiler_ctx *comp_ctx, int *
 
 	/*
 	 *  Function formal arguments, always bound to registers
+	 *  (there's no support for shuffling them now).
 	 */
 
 	num_args = duk_get_length(ctx, comp_ctx->curr_func.argnames_idx);
 	DUK_DDDPRINT("num_args=%d", num_args);
+	/* FIXME: check num_args */
+
 	for (i = 0; i < num_args; i++) {
 		duk_get_prop_index(ctx, comp_ctx->curr_func.argnames_idx, i);
 		h_name = duk_get_hstring(ctx, -1);
@@ -5587,6 +5633,7 @@ static void init_varmap_and_prologue_for_pass2(duk_compiler_ctx *comp_ctx, int *
 
 		duk_get_prop_index(ctx, comp_ctx->curr_func.decls_idx, i);  /* decl name */
 
+		/* FIXME: spilling */
 		if (comp_ctx->curr_func.is_function) {
 			int reg_bind;
 			duk_dup_top(ctx);
@@ -5688,6 +5735,7 @@ static void init_varmap_and_prologue_for_pass2(duk_compiler_ctx *comp_ctx, int *
 				continue;
 			}
 
+			/* FIXME: spilling */
 			if (comp_ctx->curr_func.is_function) {
 				int reg_bind = ALLOCTEMP(comp_ctx);
 				/* no need to init reg, it will be undefined on entry */
@@ -5802,7 +5850,7 @@ static void parse_function_body(duk_compiler_ctx *comp_ctx, int expect_eof, int 
 		 * it here.
 		 */
 #if 0
-		emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDUNDEF, 0, 0);
+		emit_extraop_bc(comp_ctx, DUK_EXTRAOP_LDUNDEF, 0);
 #endif
 	}
 
@@ -5907,7 +5955,7 @@ static void parse_function_body(duk_compiler_ctx *comp_ctx, int expect_eof, int 
 	 */
 
 	if (implicit_return_value) {
-		emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_LDUNDEF, 0, 0);
+		emit_extraop_bc(comp_ctx, DUK_EXTRAOP_LDUNDEF, 0);
 	}
 
 	DUK_DDDPRINT("begin 2nd pass");
@@ -6133,9 +6181,9 @@ static int parse_function_like_fnum(duk_compiler_ctx *comp_ctx, int is_decl, int
 	 */
 
 	entry_top = duk_get_top(ctx);
-	memcpy(&old_func, &comp_ctx->curr_func, sizeof(duk_compiler_func));
+	DUK_MEMCPY(&old_func, &comp_ctx->curr_func, sizeof(duk_compiler_func));
 
-	memset(&comp_ctx->curr_func, 0, sizeof(duk_compiler_func));
+	DUK_MEMSET(&comp_ctx->curr_func, 0, sizeof(duk_compiler_func));
 	init_function_valstack_slots(comp_ctx);
 	DUK_ASSERT(comp_ctx->curr_func.num_formals == 0);
 
@@ -6153,10 +6201,7 @@ static int parse_function_like_fnum(duk_compiler_ctx *comp_ctx, int is_decl, int
 	/* FIXME: append primitive */
 	n_funcs = duk_get_length(ctx, old_func.funcs_idx);
 
-	/* FIXME: placeholder, catches most cases; this limit is actually too tight
-	 * because CLOSURE can handle much more.
-	 */
-	if (n_funcs > 255) {
+	if (n_funcs >= MAX_FUNCS) {
 		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of funcs");
 	}
 
@@ -6166,7 +6211,7 @@ static int parse_function_like_fnum(duk_compiler_ctx *comp_ctx, int is_decl, int
 	 *  Cleanup: restore original function, restore valstack state.
 	 */
 	
-	memcpy(&comp_ctx->curr_func, &old_func, sizeof(duk_compiler_func));
+	DUK_MEMCPY(&comp_ctx->curr_func, &old_func, sizeof(duk_compiler_func));
 	duk_set_top(ctx, entry_top);
 
 	DUK_ASSERT_TOP(ctx, entry_top);
@@ -6192,7 +6237,7 @@ static int parse_function_like_fnum(duk_compiler_ctx *comp_ctx, int is_decl, int
  *  Compilation context can be either global code or eval code (see E5
  *  Sections 14 and 15.1.2.1).
  *
- *  Input stack:  [ ... sourcecode ]
+ *  Input stack:  [ ... sourcecode filename ]
  *  Output stack: [ ... func_template ]
  */
 
@@ -6201,6 +6246,7 @@ static int parse_function_like_fnum(duk_compiler_ctx *comp_ctx, int is_decl, int
 void duk_js_compile(duk_hthread *thr, int flags) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_hstring *h_sourcecode;
+	duk_hstring *h_filename;
 	duk_compiler_ctx comp_ctx_alloc;
 	duk_compiler_ctx *comp_ctx = &comp_ctx_alloc;
 	duk_lexer_point lex_pt_alloc;
@@ -6222,14 +6268,15 @@ void duk_js_compile(duk_hthread *thr, int flags) {
 	 */
 
 	entry_top = duk_get_top(ctx);
-	h_sourcecode = duk_require_hstring(ctx, -1);
-	DUK_ASSERT(entry_top >= 1);
+	h_sourcecode = duk_require_hstring(ctx, -2);
+	h_filename = duk_get_hstring(ctx, -1);  /* may be undefined */
+	DUK_ASSERT(entry_top >= 2);
 
 	/*
 	 *  Init compiler and lexer contexts
 	 */
 
-	memset(comp_ctx, 0, sizeof(*comp_ctx));
+	DUK_MEMSET(comp_ctx, 0, sizeof(*comp_ctx));
 #ifdef DUK_USE_EXPLICIT_NULL_INIT
 	comp_ctx->thr = NULL;
 	comp_ctx->h_filename = NULL;
@@ -6247,8 +6294,8 @@ void duk_js_compile(duk_hthread *thr, int flags) {
 	duk_push_undefined(ctx);               /* entry_top + 3 */
 	duk_push_undefined(ctx);               /* entry_top + 4 */
 
-	/* FIXME: h_filename */
 	comp_ctx->thr = thr;
+	comp_ctx->h_filename = h_filename;
 	comp_ctx->tok11_idx = entry_top + 1;
 	comp_ctx->tok12_idx = entry_top + 2;
 	comp_ctx->tok21_idx = entry_top + 3;
@@ -6267,7 +6314,7 @@ void duk_js_compile(duk_hthread *thr, int flags) {
 	DUK_ASSERT(DUK_HBUFFER_HAS_DYNAMIC(comp_ctx->lex.buf));
 
 #if 0  /* not needed */
-	memset(lex_pt, 0, sizeof(*lex_pt));
+	DUK_MEMSET(lex_pt, 0, sizeof(*lex_pt));
 #endif
 	lex_pt->offset = 0;
 	lex_pt->line = 1;
@@ -6327,14 +6374,14 @@ void duk_js_compile(duk_hthread *thr, int flags) {
 	 *  Mangle stack for result
 	 */
 
-	/* [ ... sourcecode (temps) func ] */
+	/* [ ... sourcecode filename (temps) func ] */
 
-	DUK_ASSERT(entry_top - 1 >= 0);
-	duk_replace(ctx, entry_top - 1);  /* replace sourcecode with func */
-	duk_set_top(ctx, entry_top);
+	DUK_ASSERT(entry_top - 2 >= 0);
+	duk_replace(ctx, entry_top - 2);  /* replace sourcecode with func */
+	duk_set_top(ctx, entry_top - 1);
 
 	/* [ ... func ] */
 
-	DUK_ASSERT_TOP(ctx, entry_top);
+	DUK_ASSERT_TOP(ctx, entry_top - 1);
 }
 
