@@ -20,15 +20,15 @@
  */
 
 #if defined(DUK_USE_DATE_NOW_GETTIMEOFDAY)
-#define  GET_NOW_TIMEVAL      get_now_timeval_gettimeofday
+#define GET_NOW_TIMEVAL      get_now_timeval_gettimeofday
 #elif defined(DUK_USE_DATE_NOW_TIME)
-#define  GET_NOW_TIMEVAL      get_now_timeval_time
+#define GET_NOW_TIMEVAL      get_now_timeval_time
 #else
 #error no function to get current time
 #endif
 
 #if defined(DUK_USE_DATE_TZO_GMTIME) || defined(DUK_USE_DATE_TZO_GMTIME_R)
-#define  GET_LOCAL_TZOFFSET   get_local_tzoffset_gmtime
+#define GET_LOCAL_TZOFFSET   get_local_tzoffset_gmtime
 #else
 #error no function to get local tzoffset
 #endif
@@ -36,8 +36,8 @@
 /* Buffer sizes for some UNIX calls.  Larger than strictly necessary
  * to avoid Valgrind errors.
  */
-#define  STRPTIME_BUF_SIZE  64
-#define  STRFTIME_BUF_SIZE  64
+#define STRPTIME_BUF_SIZE  64
+#define STRFTIME_BUF_SIZE  64
 
 /*
  *  Other file level defines
@@ -51,25 +51,27 @@ static double get_timeval_from_dparts(double *dparts, int flags);
 static void twodigit_year_fixup(duk_context *ctx, int idx_val);
 
 /* Millisecond count constants. */
-#define  MS_SECOND          1000
-#define  MS_MINUTE          (60 * 1000)
-#define  MS_HOUR            (60 * 60 * 1000)
-#define  MS_DAY             (24 * 60 * 60 * 1000)
+#define MS_SECOND          1000
+#define MS_MINUTE          (60 * 1000)
+#define MS_HOUR            (60 * 60 * 1000)
+#define MS_DAY             (24 * 60 * 60 * 1000)
 
 /* Part indices for internal breakdowns.  Part order from IDX_YEAR to
  * IDX_MILLISECOND matches argument ordering of Ecmascript API calls
  * (like Date constructor call).  A few functions in this file depend
  * on the specific ordering, so change with care.
+ *
+ * (Must be in-sync with genbuiltins.py.)
  */
-#define  IDX_YEAR           0  /* year */
-#define  IDX_MONTH          1  /* month: 0 to 11 */
-#define  IDX_DAY            2  /* day within month: 0 to 30 */
-#define  IDX_HOUR           3
-#define  IDX_MINUTE         4
-#define  IDX_SECOND         5
-#define  IDX_MILLISECOND    6
-#define  IDX_WEEKDAY        7  /* weekday: 0 to 6, 0=sunday, 1=monday, etc */
-#define  NUM_PARTS          8
+#define IDX_YEAR           0  /* year */
+#define IDX_MONTH          1  /* month: 0 to 11 */
+#define IDX_DAY            2  /* day within month: 0 to 30 */
+#define IDX_HOUR           3
+#define IDX_MINUTE         4
+#define IDX_SECOND         5
+#define IDX_MILLISECOND    6
+#define IDX_WEEKDAY        7  /* weekday: 0 to 6, 0=sunday, 1=monday, etc */
+#define NUM_PARTS          8
 
 /* Internal API call flags, used for various functions in this file.
  * Certain flags are used by only certain functions, but since the flags
@@ -78,17 +80,20 @@ static void twodigit_year_fixup(duk_context *ctx, int idx_val);
  *
  * The unused top bits of the flags field are also used to pass values
  * to helpers (get_part_helper() and set_part_helper()).
+ *
+ * (Must be in-sync with genbuiltins.py.)
  */
-#define  FLAG_NAN_TO_ZERO          (1 << 0)  /* timeval breakdown: internal time value NaN -> zero */
-#define  FLAG_NAN_TO_RANGE_ERROR   (1 << 1)  /* timeval breakdown: internal time value NaN -> RangeError (toISOString) */
-#define  FLAG_ONEBASED             (1 << 2)  /* timeval breakdown: convert month and day-of-month parts to one-based (default is zero-based) */
-#define  FLAG_LOCALTIME            (1 << 3)  /* convert time value to local time */
-#define  FLAG_SUB1900              (1 << 4)  /* getter: subtract 1900 from year when getting year part */
-#define  FLAG_TOSTRING_DATE        (1 << 5)  /* include date part in string conversion result */
-#define  FLAG_TOSTRING_TIME        (1 << 6)  /* include time part in string conversion result */
-#define  FLAG_TOSTRING_LOCALE      (1 << 7)  /* use locale specific formatting if available */
-#define  FLAG_TIMESETTER           (1 << 8)  /* setter: call is a time setter (affects hour, min, sec, ms); otherwise date setter (affects year, month, day-in-month) */
-#define  FLAG_YEAR_FIXUP           (1 << 9)  /* setter: perform 2-digit year fixup (00...99 -> 1900...1999) */
+#define FLAG_NAN_TO_ZERO          (1 << 0)  /* timeval breakdown: internal time value NaN -> zero */
+#define FLAG_NAN_TO_RANGE_ERROR   (1 << 1)  /* timeval breakdown: internal time value NaN -> RangeError (toISOString) */
+#define FLAG_ONEBASED             (1 << 2)  /* timeval breakdown: convert month and day-of-month parts to one-based (default is zero-based) */
+#define FLAG_LOCALTIME            (1 << 3)  /* convert time value to local time */
+#define FLAG_SUB1900              (1 << 4)  /* getter: subtract 1900 from year when getting year part */
+#define FLAG_TOSTRING_DATE        (1 << 5)  /* include date part in string conversion result */
+#define FLAG_TOSTRING_TIME        (1 << 6)  /* include time part in string conversion result */
+#define FLAG_TOSTRING_LOCALE      (1 << 7)  /* use locale specific formatting if available */
+#define FLAG_TIMESETTER           (1 << 8)  /* setter: call is a time setter (affects hour, min, sec, ms); otherwise date setter (affects year, month, day-in-month) */
+#define FLAG_YEAR_FIXUP           (1 << 9)  /* setter: perform 2-digit year fixup (00...99 -> 1900...1999) */
+#define FLAG_SEP_T                (1 << 10) /* string conversion: use 'T' instead of ' ' as a separator */
 
 /*
  *  Platform specific helpers
@@ -237,8 +242,10 @@ static int parse_string_strptime(duk_context *ctx, const char *str) {
 	char buf[STRPTIME_BUF_SIZE];
 
 	/* copy to buffer with spare to avoid Valgrind gripes from strptime */
-	DUK_MEMSET(buf, 0, sizeof(buf));
-	DUK_SNPRINTF(buf, sizeof(buf) - 1, "%s", str);
+	DUK_ASSERT(str != NULL);
+	DUK_MEMSET(buf, 0, sizeof(buf));  /* valgrind whine without this */
+	DUK_SNPRINTF(buf, sizeof(buf), "%s", str);
+	buf[sizeof(buf) - 1] = (char) 0;
 
 	DUK_DDDPRINT("parsing: '%s'", buf);
 
@@ -342,64 +349,64 @@ static int format_parts_strftime(duk_context *ctx, int *parts, int tzoffset, int
  */
 
 /* Parser part count. */
-#define  NUM_ISO8601_PARSER_PARTS  9
+#define NUM_ISO8601_PARSER_PARTS  9
 
 /* Parser part indices. */
-#define  PI_YEAR         0
-#define  PI_MONTH        1
-#define  PI_DAY          2
-#define  PI_HOUR         3
-#define  PI_MINUTE       4
-#define  PI_SECOND       5
-#define  PI_MILLISECOND  6
-#define  PI_TZHOUR       7
-#define  PI_TZMINUTE     8
+#define PI_YEAR         0
+#define PI_MONTH        1
+#define PI_DAY          2
+#define PI_HOUR         3
+#define PI_MINUTE       4
+#define PI_SECOND       5
+#define PI_MILLISECOND  6
+#define PI_TZHOUR       7
+#define PI_TZMINUTE     8
 
 /* Parser part masks. */
-#define  PM_YEAR         (1 << PI_YEAR)
-#define  PM_MONTH        (1 << PI_MONTH)
-#define  PM_DAY          (1 << PI_DAY)
-#define  PM_HOUR         (1 << PI_HOUR)
-#define  PM_MINUTE       (1 << PI_MINUTE)
-#define  PM_SECOND       (1 << PI_SECOND)
-#define  PM_MILLISECOND  (1 << PI_MILLISECOND)
-#define  PM_TZHOUR       (1 << PI_TZHOUR)
-#define  PM_TZMINUTE     (1 << PI_TZMINUTE)
+#define PM_YEAR         (1 << PI_YEAR)
+#define PM_MONTH        (1 << PI_MONTH)
+#define PM_DAY          (1 << PI_DAY)
+#define PM_HOUR         (1 << PI_HOUR)
+#define PM_MINUTE       (1 << PI_MINUTE)
+#define PM_SECOND       (1 << PI_SECOND)
+#define PM_MILLISECOND  (1 << PI_MILLISECOND)
+#define PM_TZHOUR       (1 << PI_TZHOUR)
+#define PM_TZMINUTE     (1 << PI_TZMINUTE)
 
 /* Parser separator indices. */
-#define  SI_PLUS         0
-#define  SI_MINUS        1
-#define  SI_T            2
-#define  SI_SPACE        3
-#define  SI_COLON        4
-#define  SI_PERIOD       5
-#define  SI_Z            6
-#define  SI_NUL          7
+#define SI_PLUS         0
+#define SI_MINUS        1
+#define SI_T            2
+#define SI_SPACE        3
+#define SI_COLON        4
+#define SI_PERIOD       5
+#define SI_Z            6
+#define SI_NUL          7
 
 /* Parser separator masks. */
-#define  SM_PLUS         (1 << SI_PLUS)
-#define  SM_MINUS        (1 << SI_MINUS)
-#define  SM_T            (1 << SI_T)
-#define  SM_SPACE        (1 << SI_SPACE)
-#define  SM_COLON        (1 << SI_COLON)
-#define  SM_PERIOD       (1 << SI_PERIOD)
-#define  SM_Z            (1 << SI_Z)
-#define  SM_NUL          (1 << SI_NUL)
+#define SM_PLUS         (1 << SI_PLUS)
+#define SM_MINUS        (1 << SI_MINUS)
+#define SM_T            (1 << SI_T)
+#define SM_SPACE        (1 << SI_SPACE)
+#define SM_COLON        (1 << SI_COLON)
+#define SM_PERIOD       (1 << SI_PERIOD)
+#define SM_Z            (1 << SI_Z)
+#define SM_NUL          (1 << SI_NUL)
 
 /* Rule control flags. */
-#define  CF_NEG          (1 << 0)  /* continue matching, set neg_tzoffset flag */
-#define  CF_ACCEPT       (1 << 1)  /* accept string */
-#define  CF_ACCEPT_NUL   (1 << 2)  /* accept string if next char is NUL (otherwise reject) */
+#define CF_NEG          (1 << 0)  /* continue matching, set neg_tzoffset flag */
+#define CF_ACCEPT       (1 << 1)  /* accept string */
+#define CF_ACCEPT_NUL   (1 << 2)  /* accept string if next char is NUL (otherwise reject) */
 
-#define  PACK_RULE(partmask,sepmask,nextpart,flags)  \
+#define PACK_RULE(partmask,sepmask,nextpart,flags)  \
 	((partmask) + ((sepmask) << 9) + ((nextpart) << 17) + ((flags) << 21))
 
-#define  UNPACK_RULE(rule,var_nextidx,var_flags)  do { \
+#define UNPACK_RULE(rule,var_nextidx,var_flags)  do { \
 		(var_nextidx) = ((rule) >> 17) & 0x0f; \
 		(var_flags) = (rule) >> 21; \
 	} while (0)
 
-#define  RULE_MASK_PART_SEP  0x1ffff
+#define RULE_MASK_PART_SEP  0x1ffff
 
 /* Matching separator index is used in the control table */
 static const char parse_iso8601_seps[] = {
@@ -627,6 +634,7 @@ static int parse_string(duk_context *ctx, const char *str) {
 	 * would be better parsed with a platform specific parser.
 	 */
 
+	DUK_ASSERT(str != NULL);
 	DUK_DDDPRINT("parse datetime from string '%s'", str);
 
 	if (parse_string_iso8601_subset(ctx, str) > 0) {
@@ -979,7 +987,7 @@ static double push_this_and_get_timeval_tzoffset(duk_context *ctx, int flags, in
 		}
 	}
 	/* if no NaN handling flag, may still be NaN here, but not Inf */
-	DUK_ASSERT(!isinf(d));
+	DUK_ASSERT(!DUK_ISINF(d));
 
 	if (flags & FLAG_LOCALTIME) {
 		/* Note: DST adjustment is determined using UTC time.
@@ -1018,45 +1026,49 @@ static int set_this_timeval_from_dparts(duk_context *ctx, double *dparts, int fl
 	return 1;
 }
 
-static int format_parts_iso8601(duk_context *ctx, int *parts, int tzoffset, int flags_and_sep) {
+static int format_parts_iso8601(duk_context *ctx, int *parts, int tzoffset, int flags) {
 	char yearstr[8];   /* "-123456\0" */
 	char tzstr[8];     /* "+11:22\0" */
-	char sep = (char) (flags_and_sep >> 16);
+	char sep = (flags & FLAG_SEP_T) ? 'T' : ' ';
 
 	DUK_ASSERT(parts[IDX_MONTH] >= 1 && parts[IDX_MONTH] <= 12);
 	DUK_ASSERT(parts[IDX_DAY] >= 1 && parts[IDX_DAY] <= 31);
+	DUK_ASSERT(parts[IDX_YEAR] >= -999999 && parts[IDX_YEAR] <= 999999);
 
-	/* Note: %06d for positive value, %07d for negative value to include sign and
-	 * 6 digits.
+	/* Note: %06d for positive value, %07d for negative value to include
+	 * sign and 6 digits.
 	 */
-	DUK_SPRINTF(yearstr,
-	            (parts[IDX_YEAR] >= 0 && parts[IDX_YEAR] <= 9999) ? "%04d" :
+	DUK_SNPRINTF(yearstr,
+	             sizeof(yearstr),
+	             (parts[IDX_YEAR] >= 0 && parts[IDX_YEAR] <= 9999) ? "%04d" :
 	                    ((parts[IDX_YEAR] >= 0) ? "+%06d" : "%07d"),
-	            parts[IDX_YEAR]);
+	             parts[IDX_YEAR]);
+	yearstr[sizeof(yearstr) - 1] = (char) 0;
 
-	if (flags_and_sep & FLAG_LOCALTIME) {
+	if (flags & FLAG_LOCALTIME) {
 		/* tzoffset seconds are dropped */
 		if (tzoffset >= 0) {
 			int tmp = tzoffset / 60;
-			DUK_SPRINTF(tzstr, "+%02d:%02d", tmp / 60, tmp % 60);
+			DUK_SNPRINTF(tzstr, sizeof(tzstr), "+%02d:%02d", tmp / 60, tmp % 60);
 		} else {
 			int tmp = -tzoffset / 60;
-			DUK_SPRINTF(tzstr, "-%02d:%02d", tmp / 60, tmp % 60);
+			DUK_SNPRINTF(tzstr, sizeof(tzstr), "-%02d:%02d", tmp / 60, tmp % 60);
 		}
+		tzstr[sizeof(tzstr) - 1] = (char) 0;
 	} else {
 		tzstr[0] = 'Z';
 		tzstr[1] = (char) 0;
 	}
 
-	if ((flags_and_sep & FLAG_TOSTRING_DATE) && (flags_and_sep & FLAG_TOSTRING_TIME)) {
+	if ((flags & FLAG_TOSTRING_DATE) && (flags & FLAG_TOSTRING_TIME)) {
 		duk_push_sprintf(ctx, "%s-%02d-%02d%c%02d:%02d:%02d.%03d%s",
 		                 yearstr, parts[IDX_MONTH], parts[IDX_DAY], sep,
 		                 parts[IDX_HOUR], parts[IDX_MINUTE], parts[IDX_SECOND],
 		                 parts[IDX_MILLISECOND], tzstr);
-	} else if (flags_and_sep & FLAG_TOSTRING_DATE) {
+	} else if (flags & FLAG_TOSTRING_DATE) {
 		duk_push_sprintf(ctx, "%s-%02d-%02d", yearstr, parts[IDX_MONTH], parts[IDX_DAY]);
 	} else {
-		DUK_ASSERT(flags_and_sep & FLAG_TOSTRING_TIME);
+		DUK_ASSERT(flags & FLAG_TOSTRING_TIME);
 		duk_push_sprintf(ctx, "%02d:%02d:%02d.%03d%s", parts[IDX_HOUR], parts[IDX_MINUTE],
 		                 parts[IDX_SECOND], parts[IDX_MILLISECOND], tzstr);
 	}
@@ -1067,13 +1079,13 @@ static int format_parts_iso8601(duk_context *ctx, int *parts, int tzoffset, int 
 /* Helper for string conversion calls: check 'this' binding, get the
  * internal time value, and format date and/or time in a few formats.
  */
-static int to_string_helper(duk_context *ctx, int flags_and_sep) {
+static int to_string_helper(duk_context *ctx, int flags) {
 	double d;
 	int parts[NUM_PARTS];
 	int tzoffset;  /* seconds */
 	int rc;
 
-	d = push_this_and_get_timeval_tzoffset(ctx, flags_and_sep, &tzoffset);
+	d = push_this_and_get_timeval_tzoffset(ctx, flags, &tzoffset);
 	if (DUK_ISNAN(d)) {
 		duk_push_hstring_stridx(ctx, DUK_STRIDX_INVALID_DATE);
 		return 1;
@@ -1085,13 +1097,13 @@ static int to_string_helper(duk_context *ctx, int flags_and_sep) {
 	DUK_ASSERT(parts[IDX_MONTH] >= 1 && parts[IDX_MONTH] <= 12);
 	DUK_ASSERT(parts[IDX_DAY] >= 1 && parts[IDX_DAY] <= 31);
 
-	if (flags_and_sep & FLAG_TOSTRING_LOCALE) {
+	if (flags & FLAG_TOSTRING_LOCALE) {
 		/* try locale specific formatter; if it refuses to format the
 		 * string, fall back to an ISO 8601 formatted value in local
 		 * time.
 		 */
 #ifdef DUK_USE_DATE_FMT_STRFTIME
-		rc = format_parts_strftime(ctx, parts, tzoffset, flags_and_sep);
+		rc = format_parts_strftime(ctx, parts, tzoffset, flags);
 		if (rc == 1) {
 			return rc;
 		}
@@ -1102,7 +1114,7 @@ static int to_string_helper(duk_context *ctx, int flags_and_sep) {
 #endif
 	}
 
-	rc = format_parts_iso8601(ctx, parts, tzoffset, flags_and_sep);
+	rc = format_parts_iso8601(ctx, parts, tzoffset, flags);
 	return rc;
 }
 
@@ -1114,7 +1126,7 @@ static int to_string_helper(duk_context *ctx, int flags_and_sep) {
 static int get_part_helper(duk_context *ctx, int flags_and_idx) {
 	double d;
 	int parts[NUM_PARTS];
-	int idx_part = flags_and_idx >> 16;
+	int idx_part = flags_and_idx >> 12;  /* unpack args */
 
 	DUK_ASSERT(idx_part >= 0 && idx_part < NUM_PARTS);
 
@@ -1147,7 +1159,7 @@ static int set_part_helper(duk_context *ctx, int flags_and_maxnargs) {
 	int parts[NUM_PARTS];
 	double dparts[NUM_PARTS];
 	int nargs;
-	int maxnargs = flags_and_maxnargs >> 16;
+	int maxnargs = flags_and_maxnargs >> 12;  /* unpack args */
 	int idx_first, idx;
 	int i;
 
@@ -1380,49 +1392,42 @@ int duk_builtin_date_constructor_now(duk_context *ctx) {
 }
 
 /*
- *  Conversions
+ *  String/JSON conversions
  *
  *  Human readable conversions are now basically ISO 8601 with a space
  *  (instead of 'T') as the date/time separator.  This is a good baseline
  *  and is platform independent.
+ *
+ *  A shared native helper to provide many conversions.  Magic value contains
+ *  a set of flags.  The helper provides:
+ *
+ *    toString()
+ *    toDateString()
+ *    toTimeString()
+ *    toLocaleString()
+ *    toLocaleDateString()
+ *    toLocaleTimeString()
+ *    toUTCString()
+ *    toISOString()
+ *
+ *  Notes:
+ *
+ *    - Date.prototype.toGMTString() and Date.prototype.toUTCString() are
+ *      required to be the same Ecmascript function object (!), so it is
+ *      omitted from here.
+ *
+ *    - Date.prototype.toUTCString(): E5.1 specification does not require a
+ *      specific format, but result should be human readable.  The
+ *      specification suggests using ISO 8601 format with a space (instead
+ *      of 'T') separator if a more human readable format is not available.
+ *
+ *    - Date.prototype.toISOString(): unlike other conversion functions,
+ *      toISOString() requires a RangeError for invalid date values.
  */
 
-#define  TOSTRING(ctx,flags,sep)  \
-	to_string_helper((ctx),(flags) | (((int) (sep)) << 16))
-
-int duk_builtin_date_prototype_to_string(duk_context *ctx) {
-	return TOSTRING(ctx, FLAG_TOSTRING_DATE |
-	                     FLAG_TOSTRING_TIME |
-	                     FLAG_LOCALTIME, ' ');
-}
-
-int duk_builtin_date_prototype_to_date_string(duk_context *ctx) {
-	return TOSTRING(ctx, FLAG_TOSTRING_DATE |
-	                     FLAG_LOCALTIME, ' ');
-}
-
-int duk_builtin_date_prototype_to_time_string(duk_context *ctx) {
-	return TOSTRING(ctx, FLAG_TOSTRING_TIME |
-	                     FLAG_LOCALTIME, ' ');
-}
-
-int duk_builtin_date_prototype_to_locale_string(duk_context *ctx) {
-	return TOSTRING(ctx, FLAG_TOSTRING_DATE |
-	                     FLAG_TOSTRING_TIME |
-	                     FLAG_TOSTRING_LOCALE |
-	                     FLAG_LOCALTIME, ' ');
-}
-
-int duk_builtin_date_prototype_to_locale_date_string(duk_context *ctx) {
-	return TOSTRING(ctx, FLAG_TOSTRING_DATE |
-	                     FLAG_TOSTRING_LOCALE |
-	                     FLAG_LOCALTIME, ' ');
-}
-
-int duk_builtin_date_prototype_to_locale_time_string(duk_context *ctx) {
-	return TOSTRING(ctx, FLAG_TOSTRING_TIME |
-	                     FLAG_TOSTRING_LOCALE |
-	                     FLAG_LOCALTIME, ' ');
+int duk_builtin_date_prototype_tostring_shared(duk_context *ctx) {
+	int flags = duk_get_magic(ctx);
+	return to_string_helper(ctx, flags);
 }
 
 int duk_builtin_date_prototype_value_of(duk_context *ctx) {
@@ -1434,25 +1439,6 @@ int duk_builtin_date_prototype_value_of(duk_context *ctx) {
 	DUK_ASSERT(DUK_ISFINITE(d) || DUK_ISNAN(d));
 	duk_push_number(ctx, d);
 	return 1;
-}
-
-int duk_builtin_date_prototype_to_utc_string(duk_context *ctx) {
-	/* E5.1 specification does not require a specific format, but
-	 * result should be human readable.  The specification suggests
-	 * using ISO 8601 format with a space (instead of 'T') separator
-	 * if a more human readable format is not available.
-	 */
-	return TOSTRING(ctx, FLAG_TOSTRING_DATE |
-	                     FLAG_TOSTRING_TIME, ' ');
-}
-
-int duk_builtin_date_prototype_to_iso_string(duk_context *ctx) {
-	/* Unlike other conversion functions, toISOString() requires a
-	 * RangeError for invalid date values.
-	 */
-	return TOSTRING(ctx, FLAG_NAN_TO_RANGE_ERROR |
-	                     FLAG_TOSTRING_DATE |
-	                     FLAG_TOSTRING_TIME, 'T');
 }
 
 int duk_builtin_date_prototype_to_json(duk_context *ctx) {
@@ -1481,8 +1467,50 @@ int duk_builtin_date_prototype_to_json(duk_context *ctx) {
 }
 
 /*
- *  Getters not related to component access.
+ *  Getters.
+ *
+ *  Implementing getters is quite easy.  The internal time value is either
+ *  NaN, or represents milliseconds (without fractions) from Jan 1, 1970.
+ *  The internal time value can be converted to integer parts, and each
+ *  part will be normalized and will fit into a 32-bit signed integer.
+ *
+ *  A shared native helper to provide all getters.  Magic value contains
+ *  a set of flags and also packs the date component index argument.  The
+ *  helper provides:
+ *
+ *    getFullYear()
+ *    getUTCFullYear()
+ *    getMonth()
+ *    getUTCMonth()
+ *    getDate()
+ *    getUTCDate()
+ *    getDay()
+ *    getUTCDay()
+ *    getHours()
+ *    getUTCHours()
+ *    getMinutes()
+ *    getUTCMinutes()
+ *    getSeconds()
+ *    getUTCSeconds()
+ *    getMilliseconds()
+ *    getUTCMilliseconds()
+ *    getYear()
+ *
+ *  Notes:
+ *
+ *    - Date.prototype.getDate(): 'date' means day-of-month, and is
+ *      zero-based in internal calculations but public API expects it to
+ *      be one-based.
+ *
+ *    - Date.prototype.getTime() and Date.prototype.valueOf() have identical
+ *      behavior.  They have separate function objects, but share the same C
+ *      function (duk_builtin_date_prototype_value_of).
  */
+
+int duk_builtin_date_prototype_get_shared(duk_context *ctx) {
+	int flags_and_idx = duk_get_magic(ctx);
+	return get_part_helper(ctx, flags_and_idx);
+}
 
 int duk_builtin_date_prototype_get_timezone_offset(duk_context *ctx) {
 	/*
@@ -1515,100 +1543,6 @@ int duk_builtin_date_prototype_get_timezone_offset(duk_context *ctx) {
 	return 1;
 }
 
-/* Date.prototype.getTime() and Date.prototype.valueOf() have identical
- * behavior.  They have separate function objects, but share the same C
- * function (duk_builtin_date_prototype_value_of).
- */
-
-/*
- *  Getters.
- *
- *  Implementing getters is quite easy.  The internal time value is either
- *  NaN, or represents milliseconds (without fractions) from Jan 1, 1970.
- *  The internal time value can be converted to integer parts, and each
- *  part will be normalized and will fit into a 32-bit signed integer.
- */
-
-/* part index is encoded into flags field to reduce argument count */
-#define  GET_PART(ctx,flags,partidx)  \
-	get_part_helper((ctx), (flags) | ((partidx) << 16))
-
-int duk_builtin_date_prototype_get_full_year(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_YEAR);
-}
-
-int duk_builtin_date_prototype_get_utc_full_year(duk_context *ctx) {
-	return GET_PART(ctx, 0, IDX_YEAR);
-}
-
-int duk_builtin_date_prototype_get_month(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_MONTH);
-}
-
-int duk_builtin_date_prototype_get_utc_month(duk_context *ctx) {
-	return GET_PART(ctx, 0, IDX_MONTH);
-}
-
-int duk_builtin_date_prototype_get_date(duk_context *ctx) {
-	/* Note: 'date' means day-of-month, and is zero-based in internal
-	 * calculations but public API expects it to be one-based.
-	 */
-	return GET_PART(ctx, FLAG_ONEBASED | FLAG_LOCALTIME, IDX_DAY);
-}
-
-int duk_builtin_date_prototype_get_utc_date(duk_context *ctx) {
-	/* Note: 'date' means day-of-month.  Result should be one-based. */
-	return GET_PART(ctx, FLAG_ONEBASED, IDX_DAY);
-}
-
-int duk_builtin_date_prototype_get_day(duk_context *ctx) {
-	/* Note: 'day' means day-of-week */
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_WEEKDAY);
-}
-
-int duk_builtin_date_prototype_get_utc_day(duk_context *ctx) {
-	/* Note: 'day' means day-of-week */
-	return GET_PART(ctx, 0, IDX_WEEKDAY);
-}
-
-int duk_builtin_date_prototype_get_hours(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_HOUR);
-}
-
-int duk_builtin_date_prototype_get_utc_hours(duk_context *ctx) {
-	return GET_PART(ctx, 0, IDX_HOUR);
-}
-
-int duk_builtin_date_prototype_get_minutes(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_MINUTE);
-}
-
-int duk_builtin_date_prototype_get_utc_minutes(duk_context *ctx) {
-	return GET_PART(ctx, 0, IDX_MINUTE);
-}
-
-int duk_builtin_date_prototype_get_seconds(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_SECOND);
-}
-
-int duk_builtin_date_prototype_get_utc_seconds(duk_context *ctx) {
-	return GET_PART(ctx, 0, IDX_SECOND);
-}
-
-int duk_builtin_date_prototype_get_milliseconds(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME, IDX_MILLISECOND);
-}
-
-int duk_builtin_date_prototype_get_utc_milliseconds(duk_context *ctx) {
-	return GET_PART(ctx, 0, IDX_MILLISECOND);
-}
-
-#ifdef DUK_USE_SECTION_B
-int duk_builtin_date_prototype_get_year(duk_context *ctx) {
-	return GET_PART(ctx, FLAG_LOCALTIME | FLAG_SUB1900, IDX_YEAR);
-}
-#endif  /* DUK_USE_SECTION_B */
-
 /*
  *  Setters.
  *
@@ -1624,10 +1558,44 @@ int duk_builtin_date_prototype_get_year(duk_context *ctx) {
  *
  *    var d = new Date(0);
  *    d.setUTCMilliseconds(1234567890);
+ *
+ *  A shared native helper to provide almost all setters.  Magic value
+ *  contains a set of flags and also packs the "maxnargs" argument.  The
+ *  helper provides:
+ *
+ *    setMilliseconds()
+ *    setUTCMilliseconds()
+ *    setSeconds()
+ *    setUTCSeconds()
+ *    setMinutes()
+ *    setUTCMinutes()
+ *    setHours()
+ *    setUTCHours()
+ *    setDate()
+ *    setUTCDate()
+ *    setMonth()
+ *    setUTCMonth()
+ *    setFullYear()
+ *    setUTCFullYear()
+ *    setYear()
+ *
+ *  Notes:
+ *
+ *    - Date.prototype.setYear() (Section B addition): special year check
+ *      is omitted.  NaN / Infinity will just flow through and ultimately
+ *      result in a NaN internal time value.
+ *
+ *    - Date.prototype.setYear() does not have optional arguments for
+ *      setting month and day-in-month (like setFullYear()), but we indicate
+ *      'maxnargs' to be 3 to get the year written to the correct component
+ *      index in set_part_helper().  The function has nargs == 1, so only
+ *      the year will be set regardless of actual argument count.
  */
 
-#define  SET_PART(ctx,flags,maxnargs) \
-	set_part_helper((ctx), (flags) | ((maxnargs) << 16))
+int duk_builtin_date_prototype_set_shared(duk_context *ctx) {
+	int flags_and_maxnargs = duk_get_magic(ctx);
+	return set_part_helper(ctx, flags_and_maxnargs);
+}
 
 int duk_builtin_date_prototype_set_time(duk_context *ctx) {
 	double d;
@@ -1640,83 +1608,4 @@ int duk_builtin_date_prototype_set_time(duk_context *ctx) {
 
 	return 1;
 }
-
-int duk_builtin_date_prototype_set_milliseconds(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER | FLAG_LOCALTIME, 1);
-}
-
-int duk_builtin_date_prototype_set_utc_milliseconds(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER, 1);
-}
-
-int duk_builtin_date_prototype_set_seconds(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER | FLAG_LOCALTIME, 2);
-}
-
-int duk_builtin_date_prototype_set_utc_seconds(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER, 2);
-}
-
-int duk_builtin_date_prototype_set_minutes(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER | FLAG_LOCALTIME, 3);
-}
-
-int duk_builtin_date_prototype_set_utc_minutes(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER, 3);
-}
-
-int duk_builtin_date_prototype_set_hours(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER | FLAG_LOCALTIME, 4);
-}
-
-int duk_builtin_date_prototype_set_utc_hours(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_TIMESETTER, 4);
-}
-
-int duk_builtin_date_prototype_set_date(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_LOCALTIME, 1);
-}
-
-int duk_builtin_date_prototype_set_utc_date(duk_context *ctx) {
-	return SET_PART(ctx, 0, 1);
-}
-
-int duk_builtin_date_prototype_set_month(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_LOCALTIME, 2);
-}
-
-int duk_builtin_date_prototype_set_utc_month(duk_context *ctx) {
-	return SET_PART(ctx, 0, 2);
-}
-
-int duk_builtin_date_prototype_set_full_year(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_NAN_TO_ZERO | FLAG_LOCALTIME, 3);
-}
-
-int duk_builtin_date_prototype_set_utc_full_year(duk_context *ctx) {
-	return SET_PART(ctx, FLAG_NAN_TO_ZERO, 3);
-}
-
-#ifdef DUK_USE_SECTION_B
-int duk_builtin_date_prototype_set_year(duk_context *ctx) {
-	/* Special year check is omitted.  NaN / Infinity will just flow
-	 * through and ultimately result in a NaN internal time value.
-	 */
-
-	/* setYear() does not have optional arguments for setting month and
-	 * day-in-month, but we indicate 'maxnargs' to be 3 to get the year
-	 * written to the correct component index in set_part_helper().
-	 * Because there are never optional arguments here (this is not a
-	 * varargs function) only the year will be set.
-	 */
-	 
-	DUK_ASSERT_TOP(ctx, 1);
-	return SET_PART(ctx, FLAG_NAN_TO_ZERO | FLAG_YEAR_FIXUP, 3);
-}
-#endif  /* DUK_USE_SECTION_B */
-
-/* Date.prototype.toGMTString() and Date.prototype.toUTCString() are
- * required to be the same Ecmascript function object (!), so it is omitted
- * from here.
- */
 

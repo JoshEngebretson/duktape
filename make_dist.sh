@@ -11,7 +11,7 @@
 #
 #    2. Add the Duktape header files to their include path.
 #
-#    3. Optionally define a DUK_PROFILE (default profile is used otherwise).
+#    3. Optionally define some DUK_OPT_xxx feature options.
 #
 #    4. Compile their program (which uses Duktape API).
 #
@@ -29,7 +29,10 @@ if [ -d .git ]; then
 else
 	BUILDINFO="`date +%Y-%m-%d`; `uname -a`; exported"
 fi
-DUK_VERSION=700   # major*10000 + minor*100 + patch
+
+# DUK_VERSION is grepped from duktape.h: it is needed for the public API
+# and we want to avoid defining it in two places.
+DUK_VERSION=`cat src/duktape.h | grep define | grep DUK_VERSION | tr -s ' ' ' ' | cut -d ' ' -f 3`
 
 echo "BUILDINFO: $BUILDINFO"
 echo "DUK_VERSION: $DUK_VERSION"
@@ -84,6 +87,7 @@ for i in	\
 	duk_builtin_string.c	\
 	duk_builtin_thread.c	\
 	duk_builtin_thrower.c	\
+	duk_dblunion.h		\
 	duk_debug_fixedbuffer.c	\
 	duk_debug.h		\
 	duk_debug_heap.c	\
@@ -158,6 +162,8 @@ for i in	\
 	duk_util_hashprime.c	\
 	duk_util_misc.c		\
 	duk_util_tinyrandom.c	\
+	duk_selftest.c		\
+	duk_selftest.h		\
 	duk_replacements.c      \
 	duk_replacements.h      \
 	; do
@@ -205,6 +211,7 @@ done
 
 cp README.txt.dist $DIST/README.txt
 cp LICENSE.txt $DIST/LICENSE.txt
+cp RELEASES.txt $DIST/RELEASES.txt
 
 for i in \
 	murmurhash2.txt \

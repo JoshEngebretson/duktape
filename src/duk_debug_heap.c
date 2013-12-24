@@ -10,7 +10,7 @@ static void sanitize_snippet(char *buf, int buf_size, duk_hstring *str) {
 	int i;
 	int nchars;
 	int maxchars;
-	duk_u8 *data;
+	duk_uint8_t *data;
 
 	DUK_MEMSET(buf, 0, buf_size);
 
@@ -24,22 +24,6 @@ static void sanitize_snippet(char *buf, int buf_size, duk_hstring *str) {
 		}
 		buf[i] = c;
 	}
-}
-
-static void format_func_ptr(char *buf, int buf_size, unsigned char *fptr, int fptr_size) {
-	int i;
-	char *p = buf;
-	char *p_end = buf + buf_size - 1;
-
-	DUK_MEMSET(buf, 0, buf_size);
-
-	for (i = 0; i < fptr_size; i++) {
-		int left = p_end - p;
-		if (left <= 0) {
-			break;
-		}
-		p += DUK_SNPRINTF(p, left, "%02x", (int) fptr[i]);
-	}	
 }
 
 static const char *get_heap_type_string(duk_heaphdr *hdr) {
@@ -97,7 +81,7 @@ static void dump_heaphdr_list(duk_heap *heap, duk_heaphdr *root, const char *nam
 }
 
 static void dump_stringtable(duk_heap *heap) {
-	duk_u32 i;
+	duk_uint32_t i;
 	char buf[64+1];
 
 	DUK_DPRINT("stringtable %p, used %d, size %d, load %d%%",
@@ -147,7 +131,7 @@ static void dump_stringtable(duk_heap *heap) {
 }
 
 static void dump_strcache(duk_heap *heap) {
-	duk_u32 i;
+	duk_uint32_t i;
 	char buf[64+1];
 
 	DUK_DPRINT("stringcache");
@@ -176,11 +160,11 @@ void duk_debug_dump_heap(duk_heap *heap) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-pedantic"
 #endif
-	format_func_ptr(buf, sizeof(buf), (unsigned char *) &heap->alloc_func, sizeof(heap->alloc_func));
-	DUK_DPRINT("  alloc_func: %s (func ptrs may be little endian)", buf);
-	format_func_ptr(buf, sizeof(buf), (unsigned char *) &heap->realloc_func, sizeof(heap->realloc_func));
+	duk_debug_format_funcptr(buf, sizeof(buf), (unsigned char *) &heap->alloc_func, sizeof(heap->alloc_func));
+	DUK_DPRINT("  alloc_func: %s", buf);
+	duk_debug_format_funcptr(buf, sizeof(buf), (unsigned char *) &heap->realloc_func, sizeof(heap->realloc_func));
 	DUK_DPRINT("  realloc_func: %s", buf);
-	format_func_ptr(buf, sizeof(buf), (unsigned char *) &heap->free_func, sizeof(heap->free_func));
+	duk_debug_format_funcptr(buf, sizeof(buf), (unsigned char *) &heap->free_func, sizeof(heap->free_func));
 	DUK_DPRINT("  free_func: %s", buf);
 #ifdef DUK_USE_GCC_PRAGMAS
 #pragma GCC diagnostic pop

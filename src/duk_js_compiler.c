@@ -23,26 +23,26 @@
 #include "duk_internal.h"
 
 /* if highest bit of a register number is set, it refers to a constant instead */
-#define  CONST_MARKER                 DUK_JS_CONST_MARKER
+#define CONST_MARKER                 DUK_JS_CONST_MARKER
 
 /* for array and object literals */
-#define  MAX_ARRAY_INIT_VALUES        20
-#define  MAX_OBJECT_INIT_PAIRS        10
+#define MAX_ARRAY_INIT_VALUES        20
+#define MAX_OBJECT_INIT_PAIRS        10
 
 /* FIXME: hack, remove when const lookup is not O(n) */
-#define  GETCONST_MAX_CONSTS_CHECK    256
+#define GETCONST_MAX_CONSTS_CHECK    256
 
 /* these limits are based on bytecode limits */
-#define  MAX_CONSTS       (DUK_BC_BC_MAX + 1)
-#define  MAX_FUNCS        (DUK_BC_BC_MAX + 1)
-#define  MAX_TEMPS        (DUK_BC_BC_MAX + 1)
+#define MAX_CONSTS                   (DUK_BC_BC_MAX + 1)
+#define MAX_FUNCS                    (DUK_BC_BC_MAX + 1)
+#define MAX_TEMPS                    (DUK_BC_BC_MAX + 1)
 
-#define  RECURSION_INCREASE(comp_ctx,thr)  do { \
+#define RECURSION_INCREASE(comp_ctx,thr)  do { \
 		DUK_DDDPRINT("RECURSION INCREASE: %s:%d", DUK_FILE_MACRO, DUK_LINE_MACRO); \
 		recursion_increase((comp_ctx)); \
 	} while(0)
 
-#define  RECURSION_DECREASE(comp_ctx,thr)  do { \
+#define RECURSION_DECREASE(comp_ctx,thr)  do { \
 		DUK_DDDPRINT("RECURSION DECREASE: %s:%d", DUK_FILE_MACRO, DUK_LINE_MACRO); \
 		recursion_decrease((comp_ctx)); \
 	} while(0)
@@ -51,10 +51,11 @@
  * overlap (in control flow), some can be eliminated.
  */
 
-#define  COMPILE_ENTRY_SLOTS          8
-#define  FUNCTION_INIT_REQUIRE_SLOTS  16
-#define  FUNCTION_BODY_REQUIRE_SLOTS  16
-#define  PARSE_STATEMENTS_SLOTS       16
+#define COMPILE_ENTRY_SLOTS          8
+#define FUNCTION_INIT_REQUIRE_SLOTS  16
+#define FUNCTION_BODY_REQUIRE_SLOTS  16
+#define PARSE_STATEMENTS_SLOTS       16
+#define PARSE_EXPR_SLOTS             16
 
 /*
  *  Prototypes
@@ -78,10 +79,10 @@ static void emit(duk_compiler_ctx *comp_ctx, duk_instr ins);
 #if 0  /* unused */
 static void emit_op_only(duk_compiler_ctx *comp_ctx, int op);
 #endif
-static void emit_a_b_c(duk_compiler_ctx *comp_ctx, int op, int a, int b, int c);
-static void emit_a_b(duk_compiler_ctx *comp_ctx, int op, int a, int b);
+static void emit_a_b_c(duk_compiler_ctx *comp_ctx, int op_flags, int a, int b, int c);
+static void emit_a_b(duk_compiler_ctx *comp_ctx, int op_flags, int a, int b);
 #if 0  /* unused */
-static void emit_a(duk_compiler_ctx *comp_ctx, int op, int a);
+static void emit_a(duk_compiler_ctx *comp_ctx, int op_flags, int a);
 #endif
 static void emit_a_bc(duk_compiler_ctx *comp_ctx, int op, int a, int bc);
 static void emit_abc(duk_compiler_ctx *comp_ctx, int op, int abc);
@@ -103,7 +104,7 @@ static void emit_invalid(duk_compiler_ctx *comp_ctx);
 /* FIXME */
 static void copy_ivalue(duk_compiler_ctx *comp_ctx, duk_ivalue *src, duk_ivalue *dst);
 static void copy_ispec(duk_compiler_ctx *comp_ctx, duk_ispec *src, duk_ispec *dst);
-static int is_whole_get_i32(double x, duk_i32 *ival);
+static int is_whole_get_i32(double x, duk_int32_t *ival);
 
 /* ivalue/ispec helpers */
 static int alloctemps(duk_compiler_ctx *comp_ctx, int num);
@@ -113,8 +114,7 @@ static int getconst(duk_compiler_ctx *comp_ctx);
 static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
                                 duk_ispec *x,
                                 int forced_reg,
-                                int allow_const,
-                                int require_temp);
+                                int flags);
 static int ispec_toforcedreg(duk_compiler_ctx *comp_ctx, duk_ispec *x, int forced_reg);
 static void ivalue_toplain_raw(duk_compiler_ctx *comp_ctx, duk_ivalue *x, int forced_reg);
 static void ivalue_toplain(duk_compiler_ctx *comp_ctx, duk_ivalue *x);
@@ -122,8 +122,7 @@ static void ivalue_toplain_ignore(duk_compiler_ctx *comp_ctx, duk_ivalue *x);
 static int ivalue_toregconst_raw(duk_compiler_ctx *comp_ctx,
                                  duk_ivalue *x,
                                  int forced_reg,
-                                 int allow_const,
-                                 int require_temp);
+                                 int flags);
 static int ivalue_toreg(duk_compiler_ctx *comp_ctx, duk_ivalue *x);
 #if 0  /* unused */
 static int ivalue_totempreg(duk_compiler_ctx *comp_ctx, duk_ivalue *x);
@@ -212,38 +211,38 @@ static int parse_function_like_fnum(duk_compiler_ctx *comp_ctx, int is_decl, int
 /* FIXME: actually single step levels would work just fine, clean up */
 
 /* binding power "levels" (see doc/compiler.txt) */
-#define  BP_INVALID                0             /* always terminates led() */
-#define  BP_EOF                    2
-#define  BP_CLOSING                4             /* token closes expression, e.g. ')', ']' */
-#define  BP_FOR_EXPR               BP_CLOSING    /* bp to use when parsing a top level Expression */
-#define  BP_COMMA                  6
-#define  BP_ASSIGNMENT             8
-#define  BP_CONDITIONAL            10
-#define  BP_LOR                    12
-#define  BP_LAND                   14
-#define  BP_BOR                    16
-#define  BP_BXOR                   18
-#define  BP_BAND                   20
-#define  BP_EQUALITY               22
-#define  BP_RELATIONAL             24
-#define  BP_SHIFT                  26
-#define  BP_ADDITIVE               28
-#define  BP_MULTIPLICATIVE         30
-#define  BP_POSTFIX                32
-#define  BP_CALL                   34
-#define  BP_MEMBER                 36
+#define BP_INVALID                0             /* always terminates led() */
+#define BP_EOF                    2
+#define BP_CLOSING                4             /* token closes expression, e.g. ')', ']' */
+#define BP_FOR_EXPR               BP_CLOSING    /* bp to use when parsing a top level Expression */
+#define BP_COMMA                  6
+#define BP_ASSIGNMENT             8
+#define BP_CONDITIONAL            10
+#define BP_LOR                    12
+#define BP_LAND                   14
+#define BP_BOR                    16
+#define BP_BXOR                   18
+#define BP_BAND                   20
+#define BP_EQUALITY               22
+#define BP_RELATIONAL             24
+#define BP_SHIFT                  26
+#define BP_ADDITIVE               28
+#define BP_MULTIPLICATIVE         30
+#define BP_POSTFIX                32
+#define BP_CALL                   34
+#define BP_MEMBER                 36
 
-#define  TOKEN_LBP_BP_MASK         0x1f
-#define  TOKEN_LBP_FLAG_NO_REGEXP  (1 << 5)   /* regexp literal must not follow this token */
-#define  TOKEN_LBP_FLAG_TERMINATES (1 << 6)   /* FIXME: terminates expression; e.g. post-increment/-decrement */
-#define  TOKEN_LBP_FLAG_UNUSED     (1 << 7)   /* spare */
+#define TOKEN_LBP_BP_MASK         0x1f
+#define TOKEN_LBP_FLAG_NO_REGEXP  (1 << 5)   /* regexp literal must not follow this token */
+#define TOKEN_LBP_FLAG_TERMINATES (1 << 6)   /* FIXME: terminates expression; e.g. post-increment/-decrement */
+#define TOKEN_LBP_FLAG_UNUSED     (1 << 7)   /* spare */
 
-#define  TOKEN_LBP_GET_BP(x)       ((int) (((x) & TOKEN_LBP_BP_MASK) * 2))
+#define TOKEN_LBP_GET_BP(x)       ((int) (((x) & TOKEN_LBP_BP_MASK) * 2))
 
-#define  MK_LBP(bp)                ((bp) >> 1)    /* bp is assumed to be even */
-#define  MK_LBP_FLAGS(bp,flags)    (((bp) >> 1) | (flags))
+#define MK_LBP(bp)                ((bp) >> 1)    /* bp is assumed to be even */
+#define MK_LBP_FLAGS(bp,flags)    (((bp) >> 1) | (flags))
 
-static duk_i8 token_lbp[] = {
+static const duk_int8_t token_lbp[] = {
 	MK_LBP(BP_EOF),                                 /* DUK_TOK_EOF */
 	MK_LBP(BP_INVALID),                             /* DUK_TOK_LINETERM */
 	MK_LBP(BP_INVALID),                             /* DUK_TOK_COMMENT */
@@ -356,7 +355,7 @@ static void recursion_increase(duk_compiler_ctx *comp_ctx) {
 	DUK_ASSERT(comp_ctx != NULL);
 	DUK_ASSERT(comp_ctx->recursion_depth >= 0);
 	if (comp_ctx->recursion_depth >= comp_ctx->recursion_limit) {
-		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "compiler recursion limit reached");
+		DUK_ERROR(comp_ctx->thr, DUK_ERR_RANGE_ERROR, "compiler recursion limit");
 	}
 	comp_ctx->recursion_depth++;
 }
@@ -793,6 +792,10 @@ static void convert_to_function_template(duk_compiler_ctx *comp_ctx) {
 		 * compression of 20-30% is quite easy to achieve even with a trivial
 		 * compressor (RLE + backwards lookup).
 		 */
+		/* FIXME: Debugging needs source code to be useful: sometimes input
+		 * code is not found in files as it may be generated and then eval()'d,
+		 * given by dynamic C code, etc.
+		 */
 
 		/*
 		 *  For global or eval code this is straightforward.  For functions
@@ -892,7 +895,24 @@ static void convert_to_function_template(duk_compiler_ctx *comp_ctx) {
 
 /*
  *  Code emission helpers
+ *
+ *  Some emission helpers understand the range of target and source reg/const
+ *  values and automatically emit shuffling code if necessary.  This only
+ *  makes sense if the slot in question (A, B, C) is used in the standard
+ *  register/constant meaning.  If slot A is used in a non-standard way the
+ *  caller simply needs to ensure that the raw value fits into A so as to not
+ *  trigger shuffling.  The flag EMIT_FLAG_NO_SHUFFLE_A can be set to ensure
+ *  compilation fails if the value does not fit into A.  For slots B and C
+ *  the raw slot size is 9 bits but one bit is reserved for the reg/const
+ *  indicator.  To use the full 9-bit range for a raw value, shuffling is
+ *  disabled with the EMIT_FLAG_NO_SHUFFLE_{B,C} flag.  Shuffling is only
+ *  done for A, B, and C slots, not the larger BC or ABC slots.
  */
+
+/* Code emission flags, passed in the 'opcode' field */
+#define EMIT_FLAG_NO_SHUFFLE_A  (1 << 8)
+#define EMIT_FLAG_NO_SHUFFLE_B  (1 << 9)
+#define EMIT_FLAG_NO_SHUFFLE_C  (1 << 10)
 
 /* FIXME: clarify on when and where CONST_MARKER is allowed */
 /* FIXME: opcode specific assertions on when consts are allowed */
@@ -926,13 +946,16 @@ static void emit(duk_compiler_ctx *comp_ctx, duk_instr ins) {
 	int line;
 	duk_compiler_instr instr;
 
+	DUK_DDDPRINT("emit: 0x%08x line=%d pc=%d --> %!I",
+	             ins, comp_ctx->curr_token.start_line, get_current_pc(comp_ctx), ins);
+
 	h = comp_ctx->curr_func.h_code;
 	line = comp_ctx->curr_token.start_line;  /* approximation, close enough */
 
 	instr.ins = ins;
 	instr.line = line;
 
-	duk_hbuffer_append_bytes(comp_ctx->thr, h, (duk_u8 *) &instr, sizeof(instr));
+	duk_hbuffer_append_bytes(comp_ctx->thr, h, (duk_uint8_t *) &instr, sizeof(instr));
 }
 
 #if 0 /* unused */
@@ -941,53 +964,135 @@ static void emit_op_only(duk_compiler_ctx *comp_ctx, int op) {
 }
 #endif
 
-static void emit_a_b_c(duk_compiler_ctx *comp_ctx, int op, int a, int b, int c) {
-	duk_instr ins;
+static void emit_a_b_c(duk_compiler_ctx *comp_ctx, int op_flags, int a, int b, int c) {
+	duk_instr ins = 0;
+	duk_int_t tmp;
 
-	DUK_ASSERT(op >= DUK_BC_OP_MIN && op <= DUK_BC_OP_MAX);
+	/* FIXME: rely on max temp/const checks; if they don't exceed BC
+	 * limit, then nothing here can too (i.e. just assert for it)?
+	 */
+
+	DUK_ASSERT((op_flags & 0xff) >= DUK_BC_OP_MIN && (op_flags & 0xff) <= DUK_BC_OP_MAX);
+
 	if (b & CONST_MARKER) {
-		b = (b & ~CONST_MARKER) + 256;
-		DUK_ASSERT(b >= DUK_BC_B_MIN + 256 && b <= DUK_BC_B_MAX);
+		DUK_ASSERT((op_flags & EMIT_FLAG_NO_SHUFFLE_B) == 0);
+		b = b & ~CONST_MARKER;
+		if (b < 0x100) {
+			ins |= DUK_ENC_OP_A_B_C(0, 0, 0x100, 0);  /* const flag for B */
+		} else if (b <= DUK_BC_BC_MAX) {
+			comp_ctx->curr_func.needs_shuffle = 1;
+			tmp = comp_ctx->curr_func.shuffle1;
+			emit(comp_ctx, DUK_ENC_OP_A_BC(DUK_OP_LDCONST, tmp, b));
+			b = tmp;
+		} else {
+			goto error_outofregs;
+		}
+	} else {
+		if (op_flags & EMIT_FLAG_NO_SHUFFLE_B) {
+			if (b >= DUK_BC_B_MAX) {
+				goto error_outofregs;
+			}
+		} else if (b < 0x100) {
+			;
+		} else if (b <= DUK_BC_BC_MAX) {
+			comp_ctx->curr_func.needs_shuffle = 1;
+			tmp = comp_ctx->curr_func.shuffle1;
+			emit(comp_ctx, DUK_ENC_OP_A_BC(DUK_OP_LDREG, tmp, b));
+			b = tmp;
+		} else {
+			goto error_outofregs;
+		}
 	}
-	if (c & CONST_MARKER) {
-		c = (c & ~CONST_MARKER) + 256;
-		DUK_ASSERT(c >= DUK_BC_C_MIN + 256 && c <= DUK_BC_C_MAX);
-	}
-	DUK_ASSERT(a >= DUK_BC_A_MIN && a <= DUK_BC_A_MAX);
-	DUK_ASSERT(b >= DUK_BC_B_MIN && b <= DUK_BC_B_MAX);
-	DUK_ASSERT(c >= DUK_BC_C_MIN && c <= DUK_BC_C_MAX);
 
-	ins = DUK_ENC_OP_A_B_C(op, a, b, c);
-	DUK_DDDPRINT("emit: 0x%08x line=%d pc=%d op=%d (%!C) a=%d b=%d c=%d (%!I)",
-	             ins, comp_ctx->curr_token.start_line, get_current_pc(comp_ctx), op, op, a, b, c, ins);
-	emit(comp_ctx, ins);
+	if (c & CONST_MARKER) {
+		DUK_ASSERT((op_flags & EMIT_FLAG_NO_SHUFFLE_C) == 0);
+		c = c & ~CONST_MARKER;
+		if (c < 0x100) {
+			ins |= DUK_ENC_OP_A_B_C(0, 0, 0, 0x100);  /* const flag for C */
+		} else if (c <= DUK_BC_BC_MAX) {
+			comp_ctx->curr_func.needs_shuffle = 1;
+			tmp = comp_ctx->curr_func.shuffle2;
+			emit(comp_ctx, DUK_ENC_OP_A_BC(DUK_OP_LDCONST, tmp, c));
+			c = tmp;
+		} else {
+			goto error_outofregs;
+		}
+	} else {
+		if (op_flags & EMIT_FLAG_NO_SHUFFLE_C) {
+			if (c >= DUK_BC_C_MAX) {
+				goto error_outofregs;
+			}
+		} else if (c < 0x100) {
+			;
+		} else if (b <= DUK_BC_BC_MAX) {
+			comp_ctx->curr_func.needs_shuffle = 1;
+			tmp = comp_ctx->curr_func.shuffle2;
+			emit(comp_ctx, DUK_ENC_OP_A_BC(DUK_OP_LDREG, tmp, c));
+			c = tmp;
+		} else {
+			goto error_outofregs;
+		}
+	}
+
+	if (a <= DUK_BC_A_MAX) {
+		ins |= DUK_ENC_OP_A_B_C(op_flags & 0xff, a, b, c);
+		emit(comp_ctx, ins);
+	} else if (op_flags & EMIT_FLAG_NO_SHUFFLE_A) {
+		goto error_outofregs;
+	} else if (a <= DUK_BC_BC_MAX) {
+		comp_ctx->curr_func.needs_shuffle = 1;
+		tmp = comp_ctx->curr_func.shuffle3;
+		ins |= DUK_ENC_OP_A_B_C(op_flags & 0xff, tmp, b, c);
+		emit(comp_ctx, ins);
+		emit(comp_ctx, DUK_ENC_OP_A_BC(DUK_OP_STREG, tmp, a));
+	} else {
+		goto error_outofregs;
+	}
+	return;
+
+ error_outofregs:
+	DUK_ERROR(comp_ctx->thr, DUK_ERR_RANGE_ERROR, "out of regs");
 }
 
-static void emit_a_b(duk_compiler_ctx *comp_ctx, int op, int a, int b) {
-	emit_a_b_c(comp_ctx, op, a, b, 0);
+static void emit_a_b(duk_compiler_ctx *comp_ctx, int op_flags, int a, int b) {
+	emit_a_b_c(comp_ctx, op_flags, a, b, 0);
 }
 
 #if 0  /* unused */
-static void emit_a(duk_compiler_ctx *comp_ctx, int op, int a) {
-	emit_a_b_c(comp_ctx, op, a, 0, 0);
+static void emit_a(duk_compiler_ctx *comp_ctx, int op_flags, int a) {
+	emit_a_b_c(comp_ctx, op_flags, a, 0, 0);
 }
 #endif
 
 static void emit_a_bc(duk_compiler_ctx *comp_ctx, int op, int a, int bc) {
 	duk_instr ins;
+	duk_int_t tmp;
 
 	/* allow caller to give a const number with the CONST_MARKER */
 	bc = bc & (~CONST_MARKER);
 
 	DUK_ASSERT(op >= DUK_BC_OP_MIN && op <= DUK_BC_OP_MAX);
-	DUK_ASSERT(a >= DUK_BC_A_MIN && a <= DUK_BC_A_MAX);
 	DUK_ASSERT(bc >= DUK_BC_BC_MIN && bc <= DUK_BC_BC_MAX);
 	DUK_ASSERT((bc & CONST_MARKER) == 0);
 
-	ins = DUK_ENC_OP_A_BC(op, a, bc);
-	DUK_DDDPRINT("emit: 0x%08x line=%d pc=%d op=%d (%!C) a=%d bc=%d (%!I)",
-	             ins, comp_ctx->curr_token.start_line, get_current_pc(comp_ctx), op, op, a, bc, ins);
-	emit(comp_ctx, ins);
+	/* FIXME: no check for 'bc' range now, inconsistent with emit_a_b_c */
+
+	if (a <= DUK_BC_A_MAX) {
+		ins = DUK_ENC_OP_A_BC(op, a, bc);
+		emit(comp_ctx, ins);
+	} else if (a <= DUK_BC_BC_MAX) {
+		comp_ctx->curr_func.needs_shuffle = 1;
+		tmp = comp_ctx->curr_func.shuffle3;
+		ins = DUK_ENC_OP_A_BC(op, tmp, bc);
+		emit(comp_ctx, ins);
+		emit(comp_ctx, DUK_ENC_OP_A_BC(DUK_OP_STREG, tmp, a));
+	} else {
+		goto error_outofregs;
+	}
+	return;
+
+ error_outofregs:
+	DUK_ERROR(comp_ctx->thr, DUK_ERR_RANGE_ERROR, "out of regs");
 }
 
 static void emit_abc(duk_compiler_ctx *comp_ctx, int op, int abc) {
@@ -1070,7 +1175,7 @@ static void insert_jump_empty(duk_compiler_ctx *comp_ctx, int jump_pc) {
 	instr.line = line;
 	offset = jump_pc * sizeof(duk_compiler_instr);
 
-	duk_hbuffer_insert_bytes(comp_ctx->thr, h, offset, (duk_u8 *) &instr, sizeof(instr));
+	duk_hbuffer_insert_bytes(comp_ctx->thr, h, offset, (duk_uint8_t *) &instr, sizeof(instr));
 }
 
 /* Does not assume that jump_pc contains a DUK_OP_JUMP previously; this is intentional
@@ -1194,14 +1299,22 @@ static void peephole_optimize_bytecode(duk_compiler_ctx *comp_ctx) {
  *  Intermediate value helpers
  */
 
-#define  ISREG(comp_ctx,x)              (((x) & CONST_MARKER) == 0)
-#define  ISCONST(comp_ctx,x)            (((x) & CONST_MARKER) != 0)
-#define  ISTEMP(comp_ctx,x)             (ISREG((comp_ctx), (x)) && (x) >= ((comp_ctx)->curr_func.temp_first))
-#define  GETTEMP(comp_ctx)              ((comp_ctx)->curr_func.temp_next)
-#define  SETTEMP(comp_ctx,x)            ((comp_ctx)->curr_func.temp_next = (x))  /* dangerous: must only lower (temp_max not updated) */
-#define  SETTEMP_CHECKMAX(comp_ctx,x)   settemp_checkmax((comp_ctx),(x))
-#define  ALLOCTEMP(comp_ctx)            alloctemp((comp_ctx))
-#define  ALLOCTEMPS(comp_ctx,count)     alloctemps((comp_ctx),(count))
+#define ISREG(comp_ctx,x)              (((x) & CONST_MARKER) == 0)
+#define ISCONST(comp_ctx,x)            (((x) & CONST_MARKER) != 0)
+#define ISTEMP(comp_ctx,x)             (ISREG((comp_ctx), (x)) && (x) >= ((comp_ctx)->curr_func.temp_first))
+#define GETTEMP(comp_ctx)              ((comp_ctx)->curr_func.temp_next)
+#define SETTEMP(comp_ctx,x)            ((comp_ctx)->curr_func.temp_next = (x))  /* dangerous: must only lower (temp_max not updated) */
+#define SETTEMP_CHECKMAX(comp_ctx,x)   settemp_checkmax((comp_ctx),(x))
+#define ALLOCTEMP(comp_ctx)            alloctemp((comp_ctx))
+#define ALLOCTEMPS(comp_ctx,count)     alloctemps((comp_ctx),(count))
+
+/* Flags for intermediate value coercions.  A flag for using a forced reg
+ * is not needed, the forced_reg argument suffices and generates better
+ * code (it is checked as it is used).
+ */
+#define IVAL_FLAG_ALLOW_CONST          (1 << 0)  /* allow a constant to be returned */
+#define IVAL_FLAG_REQUIRE_TEMP         (1 << 1)  /* require a (mutable) temporary as a result */
+#define IVAL_FLAG_REQUIRE_SHORT        (1 << 2)  /* require a short (8-bit) reg/const which fits into bytecode B/C slot */
 
 /* FIXME: some code might benefit from SETTEMP_IFTEMP(ctx,x) */
 
@@ -1232,14 +1345,14 @@ static void copy_ivalue(duk_compiler_ctx *comp_ctx, duk_ivalue *src, duk_ivalue 
 }
 
 /* FIXME: to util */
-static int is_whole_get_i32(double x, duk_i32 *ival) {
-	duk_i32 t;
+static int is_whole_get_i32(double x, duk_int32_t *ival) {
+	duk_int32_t t;
 
 	if (DUK_FPCLASSIFY(x) != DUK_FP_NORMAL) {
 		return 0;
 	}
 
-	t = (duk_i32) x;
+	t = (duk_int32_t) x;
 	if ((double) t == x) {
 		*ival = t;
 		return 1;
@@ -1254,16 +1367,10 @@ static int alloctemps(duk_compiler_ctx *comp_ctx, int num) {
 	res = comp_ctx->curr_func.temp_next;
 	comp_ctx->curr_func.temp_next += num;
 
-	/* FIXME: placeholder, catches most cases */
-#if 1
-	if (comp_ctx->curr_func.temp_next > 256) { /* 256 is OK */
-		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of temps");
-	}
-#else
 	if (comp_ctx->curr_func.temp_next > MAX_TEMPS) {  /* == MAX_TEMPS is OK */
 		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of temps");
 	}
-#endif
+
 	/* maintain highest 'used' temporary, needed to figure out nregs of function */
 	if (comp_ctx->curr_func.temp_next > comp_ctx->curr_func.temp_max) {
 		comp_ctx->curr_func.temp_max = comp_ctx->curr_func.temp_next;
@@ -1296,8 +1403,9 @@ static int getconst(duk_compiler_ctx *comp_ctx) {
 	tv1 = duk_get_tval(ctx, -1);
 	DUK_ASSERT(tv1 != NULL);
 
-	/* sanity workaround for handling functions with a large number of
-	 * constants at least somewhat reasonably.
+	/* Sanity workaround for handling functions with a large number of
+	 * constants at least somewhat reasonably.  Otherwise checking whether
+	 * we already have the constant would grow very slow (as it is O(N^2)).
 	 */
 	n_check = (n > GETCONST_MAX_CONSTS_CHECK ? GETCONST_MAX_CONSTS_CHECK : n);
 	for (i = 0; i < n_check; i++) {
@@ -1313,16 +1421,9 @@ static int getconst(duk_compiler_ctx *comp_ctx) {
 		}
 	}
 
-	/* FIXME: placeholder, catches most cases */
-#if 1
-	if (n > 255) { /* 255 is OK */
-		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of consts");
-	}
-#else
 	if (n >= MAX_CONSTS) {
 		DUK_ERROR(comp_ctx->thr, DUK_ERR_INTERNAL_ERROR, "out of consts");
 	}
-#endif
 
 	DUK_DDDPRINT("allocating new constant for %!T -> const index %d", tv1, n);
 	(void) duk_put_prop_index(ctx, f->consts_idx, n);  /* invalidates tv1, tv2 */
@@ -1348,15 +1449,18 @@ static int getconst(duk_compiler_ctx *comp_ctx) {
 static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
                                 duk_ispec *x,
                                 int forced_reg,
-                                int allow_const,
-                                int require_temp) {
+                                int flags) {
 	duk_hthread *thr = comp_ctx->thr;
 	duk_context *ctx = (duk_context *) thr;
 
 	DUK_DDDPRINT("ispec_toregconst_raw(): x={%d:%d:%!T}, "
-	             "forced_reg=%d, allow_const=%d, require_temp=%d",
+	             "forced_reg=%d, flags 0x%08x: allow_const=%d require_temp=%d require_short=%d",
 	             x->t, x->regconst, duk_get_tval(ctx, x->valstack_idx),
-	             forced_reg, allow_const, require_temp);
+	             forced_reg,
+	             (int) flags,
+	             (flags & IVAL_FLAG_ALLOW_CONST) ? 1 : 0,
+	             (flags & IVAL_FLAG_REQUIRE_TEMP) ? 1 : 0,
+	             (flags & IVAL_FLAG_REQUIRE_SHORT) ? 1 : 0);
 
 	switch (x->t) {
 	case DUK_ISPEC_VALUE: {
@@ -1388,7 +1492,7 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 			return dest;
 		}
 		case DUK_TAG_POINTER: {
-			DUK_NEVER_HERE();
+			DUK_UNREACHABLE();
 			break;
 		}
 		case DUK_TAG_STRING: {
@@ -1411,7 +1515,7 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 			duk_dup(ctx, x->valstack_idx);
 			constidx = getconst(comp_ctx);
 
-			if (allow_const) {
+			if (flags & IVAL_FLAG_ALLOW_CONST) {
 				return constidx;
 			}
 
@@ -1420,11 +1524,11 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 			return dest;
 		}
 		case DUK_TAG_OBJECT: {
-			DUK_NEVER_HERE();
+			DUK_UNREACHABLE();
 			break;
 		}
 		case DUK_TAG_BUFFER: {
-			DUK_NEVER_HERE();
+			DUK_UNREACHABLE();
 			break;
 		}
 		default: {
@@ -1432,12 +1536,12 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 			int constidx;
 			int dest;
 			double dval;
-			duk_i32 ival;
+			duk_int32_t ival;
 
 			DUK_ASSERT(DUK_TVAL_IS_NUMBER(tv));
 			dval = DUK_TVAL_GET_NUMBER(tv);
 
-			if (!allow_const) {
+			if (!(flags & IVAL_FLAG_ALLOW_CONST)) {
 				/* A number can be loaded either through a constant or
 				 * using LDINT+LDINTX.  Which is better depends on the
 				 * context and how many times a certain constant would
@@ -1460,7 +1564,7 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 			duk_dup(ctx, x->valstack_idx);
 			constidx = getconst(comp_ctx);
 
-			if (allow_const) {
+			if (flags & IVAL_FLAG_ALLOW_CONST) {
 				return constidx;
 			} else {
 				dest = (forced_reg >= 0 ? forced_reg : ALLOCTEMP(comp_ctx));
@@ -1471,7 +1575,7 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 		}  /* end switch */
 	}
 	case DUK_ISPEC_REGCONST: {
-		if ((x->regconst & CONST_MARKER) && !allow_const) {
+		if ((x->regconst & CONST_MARKER) && !(flags & IVAL_FLAG_ALLOW_CONST)) {
 			int dest = (forced_reg >= 0 ? forced_reg : ALLOCTEMP(comp_ctx));
 			emit_a_bc(comp_ctx, DUK_OP_LDCONST, dest, x->regconst);
 			return dest;
@@ -1482,7 +1586,7 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 				}
 				return forced_reg;
 			} else {
-				if (require_temp && !ISTEMP(comp_ctx, x->regconst)) {
+				if ((flags & IVAL_FLAG_REQUIRE_TEMP) && !ISTEMP(comp_ctx, x->regconst)) {
 					int dest = ALLOCTEMP(comp_ctx);
 					emit_a_bc(comp_ctx, DUK_OP_LDREG, dest, x->regconst);
 					return dest;
@@ -1502,12 +1606,11 @@ static int ispec_toregconst_raw(duk_compiler_ctx *comp_ctx,
 }
 
 static int ispec_toforcedreg(duk_compiler_ctx *comp_ctx, duk_ispec *x, int forced_reg) {
-	return ispec_toregconst_raw(comp_ctx, x, forced_reg, 0 /*allow_const*/, 0 /*require_temp*/);
+	return ispec_toregconst_raw(comp_ctx, x, forced_reg, 0 /*flags*/);
 }
 
 /* Coerce an duk_ivalue to a 'plain' value by generating the necessary
  * arithmetic operations, property access, or variable access bytecode.
- *
  * The duk_ivalue argument ('x') is converted into a plain value as a
  * side effect.
  */
@@ -1562,6 +1665,11 @@ static void ivalue_toplain_raw(duk_compiler_ctx *comp_ctx, duk_ivalue *x, int fo
 				}
 
 				if (accept) {
+					duk_double_union du;
+					du.d = d3;
+					DUK_DBLUNION_NORMALIZE_NAN_CHECK(&du);
+					d3 = du.d;
+
 					x->t = DUK_IVAL_PLAIN;
 					DUK_ASSERT(x->x1.t == DUK_ISPEC_VALUE);
 					DUK_TVAL_SET_NUMBER(tv1, d3);  /* old value is number: no refcount */
@@ -1579,8 +1687,8 @@ static void ivalue_toplain_raw(duk_compiler_ctx *comp_ctx, duk_ivalue *x, int fo
 			}
 		}
 
-		arg1 = ispec_toregconst_raw(comp_ctx, &x->x1, -1, 1, 0);  /* no forced reg, allow const, no require temp */
-		arg2 = ispec_toregconst_raw(comp_ctx, &x->x2, -1, 1, 0);  /* same flags */
+		arg1 = ispec_toregconst_raw(comp_ctx, &x->x1, -1, IVAL_FLAG_ALLOW_CONST | IVAL_FLAG_REQUIRE_SHORT /*flags*/);
+		arg2 = ispec_toregconst_raw(comp_ctx, &x->x2, -1, IVAL_FLAG_ALLOW_CONST | IVAL_FLAG_REQUIRE_SHORT /*flags*/);
 
 		/* If forced reg, use it as destination.  Otherwise try to
 		 * use either coerced ispec if it is a temporary.
@@ -1603,9 +1711,14 @@ static void ivalue_toplain_raw(duk_compiler_ctx *comp_ctx, duk_ivalue *x, int fo
 		return;
 	}
 	case DUK_IVAL_PROP: {
-		int arg1 = ispec_toregconst_raw(comp_ctx, &x->x1, -1, 1, 0);  /* no forced reg, allow const, no require temp */
-		int arg2 = ispec_toregconst_raw(comp_ctx, &x->x2, -1, 1, 0);  /* same flags */
+		/* FIXME: very similar to DUK_IVAL_ARITH - merge? */
+		int arg1;
+		int arg2;
 		int dest;
+
+		/* need a short reg/const, does not have to be a mutable temp */
+		arg1 = ispec_toregconst_raw(comp_ctx, &x->x1, -1, IVAL_FLAG_ALLOW_CONST | IVAL_FLAG_REQUIRE_SHORT /*flags*/);
+		arg2 = ispec_toregconst_raw(comp_ctx, &x->x2, -1, IVAL_FLAG_ALLOW_CONST | IVAL_FLAG_REQUIRE_SHORT /*flags*/);
 
 		if (forced_reg >= 0) {
 			dest = forced_reg;
@@ -1678,28 +1791,30 @@ static void ivalue_toplain_ignore(duk_compiler_ctx *comp_ctx, duk_ivalue *x) {
 static int ivalue_toregconst_raw(duk_compiler_ctx *comp_ctx,
                                  duk_ivalue *x,
                                  int forced_reg,
-                                 int allow_const,
-                                 int require_temp) {
+                                 int flags) {
 	duk_hthread *thr = comp_ctx->thr;
 	duk_context *ctx = (duk_context *) thr;
 	int reg;
-
 	DUK_UNREF(thr);
 	DUK_UNREF(ctx);
 
 	DUK_DDDPRINT("ivalue_toregconst_raw(): x={t=%d,op=%d,x1={%d:%d:%!T},x2={%d:%d:%!T}}, "
-	             "forced_reg=%d, allow_const=%d, require_temp=%d",
+	             "forced_reg=%d, flags 0x%08x: allow_const=%d require_temp=%d require_short=%d",
 	             x->t, x->op,
 	             x->x1.t, x->x1.regconst, duk_get_tval(ctx, x->x1.valstack_idx),
 	             x->x2.t, x->x2.regconst, duk_get_tval(ctx, x->x2.valstack_idx),
-	             forced_reg, allow_const, require_temp);
+	             forced_reg,
+	             (int) flags,
+	             (flags & IVAL_FLAG_ALLOW_CONST) ? 1 : 0,
+	             (flags & IVAL_FLAG_REQUIRE_TEMP) ? 1 : 0,
+	             (flags & IVAL_FLAG_REQUIRE_SHORT) ? 1 : 0);
 
 	/* first coerce to a plain value */
 	ivalue_toplain_raw(comp_ctx, x, forced_reg);
 	DUK_ASSERT(x->t == DUK_IVAL_PLAIN);
 
 	/* then to a register */
-	reg = ispec_toregconst_raw(comp_ctx, &x->x1, forced_reg, allow_const, require_temp);
+	reg = ispec_toregconst_raw(comp_ctx, &x->x1, forced_reg, flags);
 	x->x1.t = DUK_ISPEC_REGCONST;
 	x->x1.regconst = reg;
 
@@ -1707,21 +1822,21 @@ static int ivalue_toregconst_raw(duk_compiler_ctx *comp_ctx,
 }
 
 static int ivalue_toreg(duk_compiler_ctx *comp_ctx, duk_ivalue *x) {
-	return ivalue_toregconst_raw(comp_ctx, x, -1, 0, 0);  /* no forced reg, don't allow const, don't require temp */
+	return ivalue_toregconst_raw(comp_ctx, x, -1, 0 /*flags*/);
 }
 
 #if 0  /* unused */
 static int ivalue_totempreg(duk_compiler_ctx *comp_ctx, duk_ivalue *x) {
-	return ivalue_toregconst_raw(comp_ctx, x, -1, 0, 1);  /* no forced reg, don't allow const, require temp */
+	return ivalue_toregconst_raw(comp_ctx, x, -1, IVAL_FLAG_REQUIRE_TEMP /*flags*/);
 }
 #endif
 
 static int ivalue_toforcedreg(duk_compiler_ctx *comp_ctx, duk_ivalue *x, int forced_reg) {
-	return ivalue_toregconst_raw(comp_ctx, x, forced_reg, 0, 0);  /* forced reg, don't allow const, don't require temp */
+	return ivalue_toregconst_raw(comp_ctx, x, forced_reg, 0 /*flags*/);
 }
 
 static int ivalue_toregconst(duk_compiler_ctx *comp_ctx, duk_ivalue *x) {
-	return ivalue_toregconst_raw(comp_ctx, x, -1, 1, 0);  /* no forced reg, allow const, don't require temp */
+	return ivalue_toregconst_raw(comp_ctx, x, -1, IVAL_FLAG_ALLOW_CONST /*flags*/);
 }
 
 /* The issues below can be solved with better flags */
@@ -2021,9 +2136,9 @@ static void reset_labels_to_length(duk_compiler_ctx *comp_ctx, int len) {
  */
 
 /* object literal key tracking flags */
-#define  OBJ_LIT_KEY_PLAIN  (1 << 0)  /* key encountered as a plain property */
-#define  OBJ_LIT_KEY_GET    (1 << 1)  /* key encountered as a getter */
-#define  OBJ_LIT_KEY_SET    (1 << 2)  /* key encountered as a setter */
+#define OBJ_LIT_KEY_PLAIN  (1 << 0)  /* key encountered as a plain property */
+#define OBJ_LIT_KEY_GET    (1 << 1)  /* key encountered as a getter */
+#define OBJ_LIT_KEY_SET    (1 << 2)  /* key encountered as a setter */
 
 static void nud_array_literal(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 	duk_hthread *thr = comp_ctx->thr;
@@ -2121,7 +2236,14 @@ static void nud_array_literal(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 		}
 
 		if (num_values > 0) {
-			emit_a_b_c(comp_ctx, DUK_OP_MPUTARR, reg_obj, temp_start, num_values);
+			/* B and C have a non-register/const meaning, so shuffling
+			 * is not allowed.
+			 */	
+			emit_a_b_c(comp_ctx,
+			           DUK_OP_MPUTARR | EMIT_FLAG_NO_SHUFFLE_B | EMIT_FLAG_NO_SHUFFLE_C,
+			           reg_obj,
+			           temp_start,
+			           num_values);
 			init_idx = start_idx + num_values;
 #if 0  /* these are not necessary, as they're done at the top of the loop */
 			num_values = 0;
@@ -2330,7 +2452,14 @@ static void nud_object_literal(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 				reg_key = getconst(comp_ctx);
 
 				if (num_pairs > 0) {
-					emit_a_b_c(comp_ctx, DUK_OP_MPUTOBJ, reg_obj, temp_start, num_pairs);
+					/* B and C have a non-register/const meaning, so shuffling
+					 * is not allowed.
+					 */
+					emit_a_b_c(comp_ctx,
+					           DUK_OP_MPUTOBJ | EMIT_FLAG_NO_SHUFFLE_B | EMIT_FLAG_NO_SHUFFLE_C,
+					           reg_obj,
+					           temp_start,
+					           num_pairs);
 					num_pairs = 0;
 					SETTEMP(comp_ctx, temp_start);
 				}
@@ -2383,7 +2512,14 @@ static void nud_object_literal(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 		}
 
 		if (num_pairs > 0) {
-			emit_a_b_c(comp_ctx, DUK_OP_MPUTOBJ, reg_obj, temp_start, num_pairs);
+			/* B and C have a non-register/const meaning, so shuffling
+			 * is not allowed.
+			 */	
+			emit_a_b_c(comp_ctx,
+			           DUK_OP_MPUTOBJ | EMIT_FLAG_NO_SHUFFLE_B | EMIT_FLAG_NO_SHUFFLE_C,
+			           reg_obj,
+			           temp_start,
+			           num_pairs);
 #if 0  /* these are not necessary, as they're done at the top of the loop */
 			num_pairs = 0;
 			SETTEMP(comp_ctx, temp_start);
@@ -2468,7 +2604,7 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 	duk_token *tk;
 	int temp_at_entry;
 	int tok;
-	duk_u32 args;	/* temp variable to pass constants to shared code */
+	duk_uint32_t args;	/* temp variable to pass constants to shared code */
 
 	/*
 	 *  ctx->prev_token	token to process with expr_nud()
@@ -2626,7 +2762,14 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 			nargs = 0;
 		}
 
-		emit_a_b_c(comp_ctx, DUK_OP_NEW, reg_target /*target*/, reg_target /*start*/, nargs /*num_args*/);
+		/* Opcode slots are used in a non-standard way, so shuffling is
+		 * not allowed.
+		 */
+		emit_a_b_c(comp_ctx,
+		           DUK_OP_NEW | EMIT_FLAG_NO_SHUFFLE_B | EMIT_FLAG_NO_SHUFFLE_C,
+		           reg_target /*target*/,
+		           reg_target /*start*/,
+		           nargs /*num_args*/);
 
 		DUK_DDDPRINT("end parsing new expression");
 
@@ -2707,8 +2850,8 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 
 			SETTEMP(comp_ctx, temp_at_entry);
 			reg_temp = ALLOCTEMP(comp_ctx);
-			reg_obj = ispec_toregconst_raw(comp_ctx, &res->x1, -1 /*forced_reg*/, 0 /*allow_const*/, 0 /*require_temp*/);  /* don't allow const */
-			reg_key = ispec_toregconst_raw(comp_ctx, &res->x2, -1 /*forced_reg*/, 1 /*allow_const*/, 0 /*require_temp*/);
+			reg_obj = ispec_toregconst_raw(comp_ctx, &res->x1, -1 /*forced_reg*/, 0 /*flags*/);  /* don't allow const */
+			reg_key = ispec_toregconst_raw(comp_ctx, &res->x2, -1 /*forced_reg*/, IVAL_FLAG_ALLOW_CONST /*flags*/);
 			emit_a_b_c(comp_ctx, DUK_OP_DELPROP, reg_temp, reg_obj, reg_key);
 
 			res->t = DUK_IVAL_PLAIN;
@@ -2821,7 +2964,7 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 		 */
 
 		int tr;
-		tr = ivalue_toregconst_raw(comp_ctx, res, -1 /*forced_reg*/, 0 /*allow_const*/, 1 /*require_temp*/);
+		tr = ivalue_toregconst_raw(comp_ctx, res, -1 /*forced_reg*/, IVAL_FLAG_REQUIRE_TEMP /*flags*/);
 		emit_a_b(comp_ctx, args >> 8, tr, tr);
 		res->t = DUK_IVAL_PLAIN;
 		res->x1.t = DUK_ISPEC_REGCONST;
@@ -2833,7 +2976,7 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 	{
 		/* FIXME: refactor into unary2: above? */
 		int tr;
-		tr = ivalue_toregconst_raw(comp_ctx, res, -1 /*forced_reg*/, 0 /*allow_const*/, 1 /*require_temp*/);
+		tr = ivalue_toregconst_raw(comp_ctx, res, -1 /*forced_reg*/, IVAL_FLAG_REQUIRE_TEMP /*flags*/);
 		emit_extraop_b_c(comp_ctx, args >> 8, tr, tr);
 		res->t = DUK_IVAL_PLAIN;
 		res->x1.t = DUK_ISPEC_REGCONST;
@@ -2877,8 +3020,8 @@ static void expr_nud(duk_compiler_ctx *comp_ctx, duk_ivalue *res) {
 		} else if (res->t == DUK_IVAL_PROP) {
 			int reg_obj;  /* allocate to reg only (not const) */
 			int reg_key;
-			reg_obj = ispec_toregconst_raw(comp_ctx, &res->x1, -1 /*forced_reg*/, 0 /*allow_const*/, 0 /*require_temp*/);
-			reg_key = ispec_toregconst_raw(comp_ctx, &res->x2, -1 /*forced_reg*/, 1 /*allow_const*/, 0 /*require_temp*/);
+			reg_obj = ispec_toregconst_raw(comp_ctx, &res->x1, -1 /*forced_reg*/, 0 /*flags*/);  /* don't allow const */
+			reg_key = ispec_toregconst_raw(comp_ctx, &res->x2, -1 /*forced_reg*/, IVAL_FLAG_ALLOW_CONST /*flags*/);
 			emit_a_b_c(comp_ctx, DUK_OP_GETPROP, reg_res, reg_obj, reg_key);
 			emit_a_b(comp_ctx, args_op, reg_res, reg_res);
 			emit_a_b_c(comp_ctx, DUK_OP_PUTPROP, reg_obj, reg_key, reg_res);
@@ -2920,7 +3063,7 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 	duk_context *ctx = (duk_context *) thr;
 	duk_token *tk;
 	int tok;
-	duk_u32 args;	/* temp variable to pass constants and flags to shared code */
+	duk_uint32_t args;	/* temp variable to pass constants and flags to shared code */
 
 	/*
 	 *  ctx->prev_token	token to process with expr_led()
@@ -3035,21 +3178,34 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 
 			duk_dup(ctx, left->x1.valstack_idx);
 			if (lookup_lhs(comp_ctx, &reg_varbind, &reg_varname)) {
-				emit_a_b(comp_ctx, DUK_OP_CSREG, reg_cs + 0, reg_varbind);
+				emit_a_b(comp_ctx,
+				         DUK_OP_CSREG | EMIT_FLAG_NO_SHUFFLE_A,
+				         reg_cs + 0,
+				         reg_varbind);
 			} else {
-				emit_a_b(comp_ctx, DUK_OP_CSVAR, reg_cs + 0, reg_varname);
+				emit_a_b(comp_ctx,
+				         DUK_OP_CSVAR | EMIT_FLAG_NO_SHUFFLE_A,
+				         reg_cs + 0,
+				         reg_varname);
 			}
 		} else if (left->t == DUK_IVAL_PROP) {
 			DUK_DDDPRINT("function call with property base");
 			
 			ispec_toforcedreg(comp_ctx, &left->x1, reg_cs + 0);  /* base */
 			ispec_toforcedreg(comp_ctx, &left->x2, reg_cs + 1);  /* key */
-			emit_a_b_c(comp_ctx, DUK_OP_CSPROP, reg_cs + 0, reg_cs + 0, reg_cs + 1);  /* in-place setup */
+			emit_a_b_c(comp_ctx,
+			           DUK_OP_CSPROP | EMIT_FLAG_NO_SHUFFLE_A,
+			           reg_cs + 0,
+			           reg_cs + 0,
+			           reg_cs + 1);  /* in-place setup */
 		} else {
 			DUK_DDDPRINT("function call with register base");
 
 			ivalue_toforcedreg(comp_ctx, left, reg_cs + 0);
-			emit_a_b(comp_ctx, DUK_OP_CSREG, reg_cs + 0, reg_cs + 0);  /* in-place setup */
+			emit_a_b(comp_ctx,
+			         DUK_OP_CSREG | EMIT_FLAG_NO_SHUFFLE_A,
+			         reg_cs + 0,
+			         reg_cs + 0);  /* in-place setup */
 		}
 
 		SETTEMP(comp_ctx, reg_cs + 2);
@@ -3059,9 +3215,15 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 
 		/* Tailcalls are handled by back-patching the TAILCALL flag to the
 		 * already emitted instruction later (in return statement parser).
+		 * Since A, B, and C have a special meaning here, they cannot be "shuffled"
+		 * (if reg_cs or nargs don't fit in B/C, function cannot be compiled).
 		 */
 
-		emit_a_b_c(comp_ctx, DUK_OP_CALL, call_flags /*flags*/, reg_cs /*basereg*/, nargs /*numargs*/);
+		emit_a_b_c(comp_ctx,
+		           DUK_OP_CALL | EMIT_FLAG_NO_SHUFFLE_A | EMIT_FLAG_NO_SHUFFLE_B | EMIT_FLAG_NO_SHUFFLE_C,
+		           call_flags /*flags*/,
+		           reg_cs /*basereg*/,
+		           nargs /*numargs*/);
 		SETTEMP(comp_ctx, reg_cs + 1);    /* result in csreg */
 
 		res->t = DUK_IVAL_PLAIN;
@@ -3498,8 +3660,8 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 			 * it goes into the 'A' field of the opcode.
 			 */
 
-			reg_obj = ispec_toregconst_raw(comp_ctx, &left->x1, -1 /*forced_reg*/, 0 /*allow_const*/, 0 /*require_temp*/);
-			reg_key = ispec_toregconst_raw(comp_ctx, &left->x2, -1 /*forced_reg*/, 1 /*allow_const*/, 0 /*require_temp*/);
+			reg_obj = ispec_toregconst_raw(comp_ctx, &left->x1, -1 /*forced_reg*/, 0 /*flags*/);  /* don't allow const */
+			reg_key = ispec_toregconst_raw(comp_ctx, &left->x2, -1 /*forced_reg*/, IVAL_FLAG_ALLOW_CONST /*flags*/);
 	
 			if (args_op == DUK_OP_INVALID) {
 				reg_res = res->x1.regconst;
@@ -3597,8 +3759,8 @@ static void expr_led(duk_compiler_ctx *comp_ctx, duk_ivalue *left, duk_ivalue *r
 			int reg_obj;  /* allocate to reg only (not const) */
 			int reg_key;
 			int reg_temp = ALLOCTEMP(comp_ctx);
-			reg_obj = ispec_toregconst_raw(comp_ctx, &left->x1, -1 /*forced_reg*/, 0 /*allow_const*/, 0 /*require_temp*/);
-			reg_key = ispec_toregconst_raw(comp_ctx, &left->x2, -1 /*forced_reg*/, 1 /*allow_const*/, 0 /*require_temp*/);
+			reg_obj = ispec_toregconst_raw(comp_ctx, &left->x1, -1 /*forced_reg*/, 0 /*flags*/);  /* don't allow const */
+			reg_key = ispec_toregconst_raw(comp_ctx, &left->x2, -1 /*forced_reg*/, IVAL_FLAG_ALLOW_CONST /*flags*/);
 			emit_a_b_c(comp_ctx, DUK_OP_GETPROP, reg_res, reg_obj, reg_key);
 			emit_extraop_b_c(comp_ctx, DUK_EXTRAOP_TONUM, reg_res, reg_res);
 			emit_a_b(comp_ctx, args_op, reg_temp, reg_res);
@@ -3667,9 +3829,9 @@ static int expr_lbp(duk_compiler_ctx *comp_ctx) {
  *  statement).
  */
 
-#define  EXPR_RBP_MASK           0xff
-#define  EXPR_FLAG_REJECT_IN     (1 << 8)
-#define  EXPR_FLAG_ALLOW_EMPTY   (1 << 9)
+#define EXPR_RBP_MASK           0xff
+#define EXPR_FLAG_REJECT_IN     (1 << 8)
+#define EXPR_FLAG_ALLOW_EMPTY   (1 << 9)
 
 /* main expression parser function */
 static void expr(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int rbp_flags) {
@@ -3680,6 +3842,8 @@ static void expr(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int rbp_flags) {
 	int rbp;
 
 	RECURSION_INCREASE(comp_ctx, thr);
+
+	duk_require_stack(ctx, PARSE_EXPR_SLOTS);
 
 	/* filter out flags from exprtop rbp_flags here to save space */
 	rbp = rbp_flags & EXPR_RBP_MASK;
@@ -3847,11 +4011,11 @@ static void exprtop_toplain_ignore(duk_compiler_ctx *comp_ctx, duk_ivalue *res, 
 #undef IS_TERMINAL
 #endif
 
-#define  HAS_VAL                  (1 << 0)  /* stmt has non-empty value */
-#define  HAS_TERM                 (1 << 1)  /* stmt has explicit/implicit semicolon terminator */
-#define  ALLOW_AUTO_SEMI_ALWAYS   (1 << 2)  /* allow automatic semicolon even without lineterm (compatibility) */
-#define  STILL_PROLOGUE           (1 << 3)  /* statement does not terminate directive prologue */
-#define  IS_TERMINAL              (1 << 4)  /* statement is guaranteed to be terminal (control doesn't flow to next statement) */
+#define HAS_VAL                  (1 << 0)  /* stmt has non-empty value */
+#define HAS_TERM                 (1 << 1)  /* stmt has explicit/implicit semicolon terminator */
+#define ALLOW_AUTO_SEMI_ALWAYS   (1 << 2)  /* allow automatic semicolon even without lineterm (compatibility) */
+#define STILL_PROLOGUE           (1 << 3)  /* statement does not terminate directive prologue */
+#define IS_TERMINAL              (1 << 4)  /* statement is guaranteed to be terminal (control doesn't flow to next statement) */
 
 /* Parse a single variable declaration (e.g. "i" or "i=10").  A leading 'var'
  * has already been eaten.  These is no return value in 'res', it is used only
@@ -4082,8 +4246,8 @@ static void parse_for_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int
 				 */
 				int reg_obj;
 				int reg_key;
-				reg_obj = ispec_toregconst_raw(comp_ctx, &res->x1, -1 /*forced_reg*/, 0 /*allow_const*/, 0 /*require_temp*/);
-				reg_key = ispec_toregconst_raw(comp_ctx, &res->x2, -1 /*forced_reg*/, 1 /*allow_const*/, 0 /*require_temp*/);
+				reg_obj = ispec_toregconst_raw(comp_ctx, &res->x1, -1 /*forced_reg*/, 0 /*flags*/);  /* don't allow const */
+				reg_key = ispec_toregconst_raw(comp_ctx, &res->x2, -1 /*forced_reg*/, IVAL_FLAG_ALLOW_CONST /*flags*/);
 				emit_a_b_c(comp_ctx, DUK_OP_PUTPROP, reg_obj, reg_key, reg_temps + 0);
 			} else {
 				ivalue_toplain_ignore(comp_ctx, res);  /* just in case */
@@ -4507,8 +4671,8 @@ static void parse_do_statement(duk_compiler_ctx *comp_ctx, duk_ivalue *res, int 
 	advance(comp_ctx);  /* eat 'do' */
 
 	pc_start = get_current_pc(comp_ctx);
-	patch_jump_here(comp_ctx, pc_label_site + 2);  /* continue jump */
 	parse_statement(comp_ctx, res, 0 /*allow_source_elem*/);
+	patch_jump_here(comp_ctx, pc_label_site + 2);  /* continue jump */
 
 	advance_expect(comp_ctx, DUK_TOK_WHILE);
 	advance_expect(comp_ctx, DUK_TOK_LPAREN);
@@ -5607,8 +5771,26 @@ static void init_varmap_and_prologue_for_pass2(duk_compiler_ctx *comp_ctx, int *
 	/* use temp_next for tracking register allocations */
 	SETTEMP_CHECKMAX(comp_ctx, num_args);
 
+	/*
+	 *  After arguments, allocate special registers (like shuffling temps)
+	 */
+
 	if (out_stmt_value_reg) {
 		*out_stmt_value_reg = ALLOCTEMP(comp_ctx);
+	}
+	if (comp_ctx->curr_func.needs_shuffle) {
+		int shuffle_base = ALLOCTEMPS(comp_ctx, 3);
+		comp_ctx->curr_func.shuffle1 = shuffle_base;
+		comp_ctx->curr_func.shuffle2 = shuffle_base + 1;
+		comp_ctx->curr_func.shuffle3 = shuffle_base + 2;
+		DUK_DPRINT("shuffle registers needed by function, allocated: %d %d %d",
+		           (int) comp_ctx->curr_func.shuffle1,
+		           (int) comp_ctx->curr_func.shuffle2,
+		           (int) comp_ctx->curr_func.shuffle3);
+	}
+	if (comp_ctx->curr_func.temp_next > 0x100) {
+		DUK_DPRINT("not enough 8-bit regs: temp_next=%d", (int) comp_ctx->curr_func.temp_next);
+		goto error_outofregs;
 	}
 
 	/*
@@ -5770,8 +5952,15 @@ static void init_varmap_and_prologue_for_pass2(duk_compiler_ctx *comp_ctx, int *
 	DUK_ASSERT_TOP(ctx, entry_top);
 	return;
 
+ error_outofregs:
+	DUK_ERROR(thr, DUK_ERR_RANGE_ERROR, "out of regs");
+	DUK_UNREACHABLE();
+	return;
+
  error_argname:
 	DUK_ERROR(thr, DUK_ERR_SYNTAX_ERROR, "invalid arg name");
+	DUK_UNREACHABLE();
+	return;
 }
 
 /*

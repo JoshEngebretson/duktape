@@ -13,9 +13,9 @@
  *  convenient field).  The prototype chain is not followed in the ordinary
  *  sense for variable lookups.
  *
- *  See identifier-design.txt and identifier-algorithms.txt for more details
- *  on identifier handling, and function-objects.txt for details on what
- *  function instances are expected to look like.
+ *  See identifier-handling.txt for more details on the identifier algorithms
+ *  and the internal representation.  See function-objects.txt for details on
+ *  what function templates and instances are expected to look like.
  *
  *  Care must be taken to avoid duk_tval pointer invalidation caused by
  *  e.g. value stack or object resizing.
@@ -38,7 +38,8 @@
 
 typedef struct {
 	duk_hobject *holder;      /* for object-bound identifiers */
-	duk_tval *value;          /* for register-bound identifiers */
+	duk_tval *value;          /* for register-bound and declarative env identifiers */
+	duk_int_t attrs;          /* property attributes for identifier (relevant if value != NULL) */
 	duk_tval *this_binding;
 	duk_hobject *env;
 } duk_id_lookup_result;
@@ -105,20 +106,25 @@ static void increase_data_inner_refcounts(duk_hthread *thr, duk_hcompiledfunctio
  * outer_lex_env matters (outer_var_env is ignored and may or
  * may not be same as outer_lex_env).
  */
+
+static const duk_uint16_t duk_closure_copy_proplist[] = {
+	/* order: most frequent to least frequent */
+	DUK_STRIDX_INT_VARMAP,
+	DUK_STRIDX_INT_FORMALS,
+	DUK_STRIDX_NAME,
+	DUK_STRIDX_INT_PC2LINE,
+	DUK_STRIDX_FILE_NAME,
+	DUK_STRIDX_INT_SOURCE
+};
+	
 void duk_js_push_closure(duk_hthread *thr,
                          duk_hcompiledfunction *fun_temp,
                          duk_hobject *outer_var_env,
                          duk_hobject *outer_lex_env) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_hcompiledfunction *fun_clos;
-	duk_u16 proplist[] = { DUK_STRIDX_INT_VARMAP,
-	                       DUK_STRIDX_INT_FORMALS,
-	                       DUK_STRIDX_NAME,
-	                       DUK_STRIDX_INT_PC2LINE,
-	                       DUK_STRIDX_FILE_NAME,
-	                       DUK_STRIDX_INT_SOURCE };  /* order: most frequent to least frequent */
 	int i;
-	duk_u32 len_value;
+	duk_uint32_t len_value;
 
 	DUK_ASSERT(fun_temp != NULL);
 	DUK_ASSERT(fun_temp->data != NULL);
@@ -292,14 +298,16 @@ void duk_js_push_closure(duk_hthread *thr,
 
 	/*
 	 *  Copy some internal properties directly
+	 *
+	 *  The properties will be writable and configurable, but not enumerable.
 	 */
 
 	/* [ ... closure template ] */
 
 	DUK_DDDPRINT("copying properties: closure=%!iT, template=%!iT", duk_get_tval(ctx, -2), duk_get_tval(ctx, -1));
 
-	for (i = 0; i < sizeof(proplist) / sizeof(duk_u16); i++) {
-		int stridx = (int) proplist[i];
+	for (i = 0; i < sizeof(duk_closure_copy_proplist) / sizeof(duk_uint16_t); i++) {
+		int stridx = (int) duk_closure_copy_proplist[i];
 		if (duk_get_prop_stridx(ctx, -1, stridx)) {
 			/* [ ... closure template val ] */
 			DUK_DDDPRINT("copying property, stridx=%d -> found", stridx);
@@ -437,7 +445,7 @@ void duk_js_push_closure(duk_hthread *thr,
 /* shared helper */
 duk_hobject *duk_create_activation_environment_record(duk_hthread *thr,
                                                       duk_hobject *func,
-                                                      duk_u32 idx_bottom) {
+                                                      duk_uint32_t idx_bottom) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_hobject *env;
 	duk_hobject *parent;
@@ -763,6 +771,7 @@ static int get_identifier_open_decl_env_regs(duk_hthread *thr,
 	DUK_ASSERT(tv >= env_thr->valstack && tv < env_thr->valstack_end);  /* FIXME: more accurate? */
 
 	out->value = tv;
+	out->attrs = DUK_PROPDESC_FLAGS_W;  /* registers are mutable, non-deletable */
 	out->this_binding = NULL;  /* implicit this value always undefined for
 	                            * declarative environment records.
 	                            */
@@ -817,6 +826,7 @@ static int get_identifier_activation_regs(duk_hthread *thr,
 	tv = &thr->valstack[idx];
 
 	out->value = tv;
+	out->attrs = DUK_PROPDESC_FLAGS_W;  /* registers are mutable, non-deletable */
 	out->this_binding = NULL;  /* implicit this value always undefined for
 	                            * declarative environment records.
 	                            */
@@ -833,7 +843,7 @@ static int get_identifier_reference(duk_hthread *thr,
                                     int parents,
                                     duk_id_lookup_result *out) {
 	duk_tval *tv;
-	duk_u32 sanity;
+	duk_uint32_t sanity;
 
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(env != NULL || act != NULL);
@@ -871,9 +881,9 @@ static int get_identifier_reference(duk_hthread *thr,
 
 		if (get_identifier_activation_regs(thr, name, act, out)) {
 			DUK_DDDPRINT("get_identifier_reference successful: "
-			             "name=%!O -> value=%!T, this=%!T, env=%!O, holder=%!O "
+			             "name=%!O -> value=%!T, attrs=%d, this=%!T, env=%!O, holder=%!O "
 			             "(found from register bindings when env=NULL)",
-			             (duk_heaphdr *) name, out->value, out->this_binding,
+			             (duk_heaphdr *) name, out->value, (int) out->attrs, out->this_binding,
 			             out->env, out->holder);
 			return 1;
 		}
@@ -927,6 +937,7 @@ static int get_identifier_reference(duk_hthread *thr,
 	while (env != NULL) {
 		duk_tval *tv;
 		int cl;
+		duk_int_t attrs;
 
 		DUK_DDDPRINT("get_identifier_reference, name=%!O, considering env=%p -> %!iO",
 		             (duk_heaphdr *) name,
@@ -959,17 +970,18 @@ static int get_identifier_reference(duk_hthread *thr,
 
 			if (get_identifier_open_decl_env_regs(thr, name, env, out)) {
 				DUK_DDDPRINT("get_identifier_reference successful: "
-				             "name=%!O -> value=%!T, this=%!T, env=%!O, holder=%!O "
+				             "name=%!O -> value=%!T, attrs=%d, this=%!T, env=%!O, holder=%!O "
 				             "(declarative environment record, scope open, found in regs)",
-				             (duk_heaphdr *) name, out->value, out->this_binding,
+				             (duk_heaphdr *) name, out->value, (int) out->attrs, out->this_binding,
 				             out->env, out->holder);
 				return 1;
 			}
 		 skip_regs:
 
-			tv = duk_hobject_find_existing_entry_tval_ptr(env, name);
+			tv = duk_hobject_find_existing_entry_tval_ptr_and_attrs(env, name, &attrs);
 			if (tv) {
 				out->value = tv;
+				out->attrs = attrs;
 				out->this_binding = NULL;  /* implicit this value always undefined for
 				                            * declarative environment records.
 				                            */
@@ -977,9 +989,9 @@ static int get_identifier_reference(duk_hthread *thr,
 				out->holder = env;
 
 				DUK_DDDPRINT("get_identifier_reference successful: "
-				             "name=%!O -> value=%!T, this=%!T, env=%!O, holder=%!O "
+				             "name=%!O -> value=%!T, attrs=%d, this=%!T, env=%!O, holder=%!O "
 				             "(declarative environment record, found in properties)",
-				             (duk_heaphdr *) name, out->value, out->this_binding,
+				             (duk_heaphdr *) name, out->value, (int) out->attrs, out->this_binding,
 				             out->env, out->holder);
 				return 1;
 			}
@@ -1017,17 +1029,16 @@ static int get_identifier_reference(duk_hthread *thr,
 
 			if (duk_hobject_hasprop_raw(thr, target, name)) {
 				out->value = NULL;  /* can't get value, may be accessor */
-
+				out->attrs = 0;     /* irrelevant when out->value == NULL */
 				tv = duk_hobject_find_existing_entry_tval_ptr(env, DUK_HTHREAD_STRING_INT_THIS(thr));
 				out->this_binding = tv;  /* may be NULL */
-
 				out->env = env;
 				out->holder = target;
 
 				DUK_DDDPRINT("get_identifier_reference successful: "
-				             "name=%!O -> value=%!T, this=%!T, env=%!O, holder=%!O "
+				             "name=%!O -> value=%!T, attrs=%d, this=%!T, env=%!O, holder=%!O "
 				             "(object environment record)",
-				             (duk_heaphdr *) name, out->value, out->this_binding,
+				             (duk_heaphdr *) name, out->value, (int) out->attrs, out->this_binding,
 				             out->env, out->holder);
 				return 1;
 			}
@@ -1260,7 +1271,12 @@ static void putvar_helper(duk_hthread *thr,
 	parents = 1;     /* follow parent chain */
 
 	if (get_identifier_reference(thr, env, name, act, parents, &ref)) {
-		if (ref.value) {
+		if (ref.value && (ref.attrs & DUK_PROPDESC_FLAG_WRITABLE)) {
+			/* Update duk_tval in-place if pointer provided and the
+			 * property is writable.  If the property is not writable
+			 * (immutable binding), use duk_hobject_putprop() which
+			 * will respect mutability.
+			 */
 			duk_tval tv_tmp;
 			duk_tval *tv_val;
 
@@ -1365,8 +1381,10 @@ static int delvar_helper(duk_hthread *thr,
 	parents = 1;     /* follow parent chain */
 
 	if (get_identifier_reference(thr, env, name, act, parents, &ref)) {
-		if (ref.value) {
-			/* value found, but in regs (not deletable) */
+		if (ref.value && !(ref.attrs & DUK_PROPDESC_FLAG_CONFIGURABLE)) {
+			/* Identifier found in registers (always non-deletable)
+			 * or declarative environment record and non-configurable.
+			 */
 			return 0;
 		}
 		DUK_ASSERT(ref.holder != NULL);

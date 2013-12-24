@@ -13,62 +13,62 @@
  */
 
 /* Note: assumes 'data' is always a fixed buffer */
-#define  DUK_HCOMPILEDFUNCTION_GET_BUFFER_BASE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_BUFFER_BASE(h)  \
 	DUK_HBUFFER_FIXED_GET_DATA_PTR((duk_hbuffer_fixed *) (h)->data)
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CONSTS_BASE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CONSTS_BASE(h)  \
 	((duk_tval *) DUK_HCOMPILEDFUNCTION_GET_BUFFER_BASE((h)))
 
-#define  DUK_HCOMPILEDFUNCTION_GET_FUNCS_BASE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_FUNCS_BASE(h)  \
 	((h)->funcs)
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CODE_BASE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CODE_BASE(h)  \
 	((h)->bytecode)
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CONSTS_END(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CONSTS_END(h)  \
 	((duk_tval *) DUK_HCOMPILEDFUNCTION_GET_FUNCS_BASE((h)))
 
-#define  DUK_HCOMPILEDFUNCTION_GET_FUNCS_END(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_FUNCS_END(h)  \
 	((duk_hobject **) DUK_HCOMPILEDFUNCTION_GET_CODE_BASE((h)))
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CODE_END(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CODE_END(h)  \
 	((duk_instr *) (DUK_HBUFFER_FIXED_GET_DATA_PTR((duk_hbuffer_fixed *) (h)->data) + \
 	                DUK_HBUFFER_GET_SIZE((h)->data)))
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CONSTS_SIZE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CONSTS_SIZE(h)  \
 	( \
 	 (size_t) \
 	 ( \
-	   ((duk_u8 *) DUK_HCOMPILEDFUNCTION_GET_CONSTS_END((h))) - \
-	   ((duk_u8 *) DUK_HCOMPILEDFUNCTION_GET_CONSTS_BASE((h))) \
+	   ((duk_uint8_t *) DUK_HCOMPILEDFUNCTION_GET_CONSTS_END((h))) - \
+	   ((duk_uint8_t *) DUK_HCOMPILEDFUNCTION_GET_CONSTS_BASE((h))) \
 	 ) \
 	)
 
-#define  DUK_HCOMPILEDFUNCTION_GET_FUNCS_SIZE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_FUNCS_SIZE(h)  \
 	( \
 	 (size_t) \
 	 ( \
-	   ((duk_u8 *) DUK_HCOMPILEDFUNCTION_GET_FUNCS_END((h))) - \
-	   ((duk_u8 *) DUK_HCOMPILEDFUNCTION_GET_FUNCS_BASE((h))) \
+	   ((duk_uint8_t *) DUK_HCOMPILEDFUNCTION_GET_FUNCS_END((h))) - \
+	   ((duk_uint8_t *) DUK_HCOMPILEDFUNCTION_GET_FUNCS_BASE((h))) \
 	 ) \
 	)
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CODE_SIZE(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CODE_SIZE(h)  \
 	( \
 	 (size_t) \
 	 ( \
-	   ((duk_u8 *) DUK_HCOMPILEDFUNCTION_GET_CODE_END((h))) - \
-	   ((duk_u8 *) DUK_HCOMPILEDFUNCTION_GET_CODE_BASE((h))) \
+	   ((duk_uint8_t *) DUK_HCOMPILEDFUNCTION_GET_CODE_END((h))) - \
+	   ((duk_uint8_t *) DUK_HCOMPILEDFUNCTION_GET_CODE_BASE((h))) \
 	 ) \
 	)
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CONSTS_COUNT(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CONSTS_COUNT(h)  \
 	((size_t) (DUK_HCOMPILEDFUNCTION_GET_CONSTS_SIZE((h)) / sizeof(duk_tval)))
 
-#define  DUK_HCOMPILEDFUNCTION_GET_FUNCS_COUNT(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_FUNCS_COUNT(h)  \
 	((size_t) (DUK_HCOMPILEDFUNCTION_GET_FUNCS_SIZE((h)) / sizeof(duk_hobject *)))
 
-#define  DUK_HCOMPILEDFUNCTION_GET_CODE_COUNT(h)  \
+#define DUK_HCOMPILEDFUNCTION_GET_CODE_COUNT(h)  \
 	((size_t) (DUK_HCOMPILEDFUNCTION_GET_CODE_SIZE((h)) / sizeof(duk_instr)))
 
 
@@ -129,8 +129,8 @@ struct duk_hcompiledfunction {
 	 *  at run time, except for debugging, so it is not maintained.
 	 */
 
-	duk_u16 nregs;                /* regs to allocate */
-	duk_u16 nargs;                /* number of arguments allocated to regs */
+	duk_uint16_t nregs;                /* regs to allocate */
+	duk_uint16_t nargs;                /* number of arguments allocated to regs */
 
 	/*
 	 *  Additional control information is placed into the object itself

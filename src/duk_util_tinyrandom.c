@@ -8,17 +8,17 @@
 
 #include "duk_internal.h"
 
-#define  UPDATE_RND(rnd) do { \
+#define UPDATE_RND(rnd) do { \
 		(rnd) += ((rnd) * (rnd)) | 0x05; \
-		(rnd) = ((rnd) & 0xffffffffU);       /* if duk_u32 is exactly 32 bits, this is a NOP */ \
+		(rnd) = ((rnd) & 0xffffffffU);       /* if duk_uint32_t is exactly 32 bits, this is a NOP */ \
 	} while (0)
 
-#define  RND_BIT(rnd)  ((rnd) >> 31)  /* only use the highest bit */
+#define RND_BIT(rnd)  ((rnd) >> 31)  /* only use the highest bit */
 
-duk_u32 duk_util_tinyrandom_get_bits(duk_hthread *thr, int n) {
-	int i;
-	duk_u32 res = 0;
-	duk_u32 rnd;
+duk_uint32_t duk_util_tinyrandom_get_bits(duk_hthread *thr, duk_small_int_t n) {
+	duk_small_int_t i;
+	duk_uint32_t res = 0;
+	duk_uint32_t rnd;
 
 	rnd = thr->heap->rnd_state;
 
@@ -33,10 +33,10 @@ duk_u32 duk_util_tinyrandom_get_bits(duk_hthread *thr, int n) {
 	return res;
 }
 
-double duk_util_tinyrandom_get_double(duk_hthread *thr) {
-	double t;
-	int n;
-	duk_u32 rnd;
+duk_double_t duk_util_tinyrandom_get_double(duk_hthread *thr) {
+	duk_double_t t;
+	duk_small_int_t n;
+	duk_uint32_t rnd;
 
 	/*
 	 *  XXX: could make this a lot faster if we create the double memory
@@ -56,8 +56,8 @@ double duk_util_tinyrandom_get_double(duk_hthread *thr) {
 
 	thr->heap->rnd_state = rnd;
 
-	DUK_ASSERT(t >= (double) 0.0);
-	DUK_ASSERT(t < (double) 1.0);
+	DUK_ASSERT(t >= (duk_double_t) 0.0);
+	DUK_ASSERT(t < (duk_double_t) 1.0);
 
 	return t;
 }

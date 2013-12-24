@@ -51,15 +51,15 @@
  *    * Add a feature flag for disabling UTF-8 decoding of input, as most
  *      source code is ASCII.  Because of Unicode escapes written in ASCII,
  *      this does not allow Unicode support to be removed from e.g.
- *      duk_is_identifier_start() nor does it allow removal of CESU-8
+ *      duk_unicode_is_identifier_start() nor does it allow removal of CESU-8
  *      encoding of e.g. string literals.
  *
  *    * Add a feature flag for disabling Unicode compliance of e.g. identifier
  *      names.  This allows for a build more than a kilobyte smaller, because
- *      Unicode ranges needed by duk_is_identifier_start() and
- *      duk_is_identifier_part() can be dropped.  String literals should still
- *      be allowed to contain escaped Unicode, so this still does not allow
- *      removal of CESU-8 encoding of e.g. string literals.
+ *      Unicode ranges needed by duk_unicode_is_identifier_start() and
+ *      duk_unicode_is_identifier_part() can be dropped.  String literals
+ *      should still be allowed to contain escaped Unicode, so this still does
+ *      not allow removal of CESU-8 encoding of e.g. string literals.
  *
  *    * Character lookup tables for codepoints above BMP could be stripped.
  *
@@ -82,31 +82,31 @@
  *  Various defines and file specific helper macros
  */
 
-#define  MAX_REGEXP_DECIMAL_ESCAPE_DIGITS  9
-#define  MAX_REGEXP_QUANTIFIER_DIGITS      9   /* FIXME: does not allow e.g. 2**31-1, but one more would allow overflows of u32 */
+#define MAX_REGEXP_DECIMAL_ESCAPE_DIGITS  9
+#define MAX_REGEXP_QUANTIFIER_DIGITS      9   /* FIXME: does not allow e.g. 2**31-1, but one more would allow overflows of u32 */
 
-#define  LOOKUP(lex_ctx,index)    ((lex_ctx)->window[(index)])
-#define  ADVANCE(lex_ctx,count)   advance_chars((lex_ctx), (count))
-#define  INITBUFFER(lex_ctx)      initbuffer((lex_ctx))
-#define  APPENDBUFFER(lex_ctx,x)  appendbuffer((lex_ctx), (int) (x))
+#define LOOKUP(lex_ctx,index)    ((lex_ctx)->window[(index)])
+#define ADVANCE(lex_ctx,count)   advance_chars((lex_ctx), (count))
+#define INITBUFFER(lex_ctx)      initbuffer((lex_ctx))
+#define APPENDBUFFER(lex_ctx,x)  appendbuffer((lex_ctx), (int) (x))
 
 /* whether to use macros or helper function depends on call count */
-#define  ISDIGIT(x)          ((x) >= '0' && (x) <= '9')
-#define  ISHEXDIGIT(x)       is_hex_digit((x))
-#define  ISOCTDIGIT(x)       ((x) >= '0' && (x) <= '7')
-#define  ISDIGIT03(x)        ((x) >= '0' && (x) <= '3')
-#define  ISDIGIT47(x)        ((x) >= '4' && (x) <= '7')
+#define ISDIGIT(x)          ((x) >= '0' && (x) <= '9')
+#define ISHEXDIGIT(x)       is_hex_digit((x))
+#define ISOCTDIGIT(x)       ((x) >= '0' && (x) <= '7')
+#define ISDIGIT03(x)        ((x) >= '0' && (x) <= '3')
+#define ISDIGIT47(x)        ((x) >= '4' && (x) <= '7')
 
 /* lookup shorthands (note: assume context variable is named 'lex_ctx') */
-#define  L0()  LOOKUP(lex_ctx, 0)
-#define  L1()  LOOKUP(lex_ctx, 1)
-#define  L2()  LOOKUP(lex_ctx, 2)
-#define  L3()  LOOKUP(lex_ctx, 3)
-#define  L4()  LOOKUP(lex_ctx, 4)
-#define  L5()  LOOKUP(lex_ctx, 5)
+#define L0()  LOOKUP(lex_ctx, 0)
+#define L1()  LOOKUP(lex_ctx, 1)
+#define L2()  LOOKUP(lex_ctx, 2)
+#define L3()  LOOKUP(lex_ctx, 3)
+#define L4()  LOOKUP(lex_ctx, 4)
+#define L5()  LOOKUP(lex_ctx, 5)
 
 /* packed advance/token number macro used by multiple functions */
-#define  ADVTOK(adv,tok)  (((adv) << 8) + (tok))
+#define ADVTOK(adv,tok)  (((adv) << 8) + (tok))
 
 /*
  *  Read a character from the window leading edge and update the line counter.
@@ -166,7 +166,7 @@ static int read_char(duk_lexer_ctx *lex_ctx) {
 	int x;
 	int len;
 	int i;
-	duk_u8 *p;
+	duk_uint8_t *p;
 #ifdef DUK_USE_STRICT_UTF8_SOURCE
 	int mincp;
 #endif
@@ -578,7 +578,7 @@ static void parse_input_element_raw(duk_lexer_ctx *lex_ctx,
 			 *  automatic semicolon insertion.
 			 */
 
-			duk_u8 last_asterisk = 0;
+			duk_uint8_t last_asterisk = 0;
 			advtok = ADVTOK(0, DUK_TOK_COMMENT);
 			ADVANCE(lex_ctx, 2);
 			for (;;) {
@@ -661,7 +661,7 @@ static void parse_input_element_raw(duk_lexer_ctx *lex_ctx,
 
 			/* first, parse regexp body roughly */
 
-			duk_u8 state = 0;  /* 0=base, 1=esc, 2=class, 3=class+esc */
+			duk_uint8_t state = 0;  /* 0=base, 1=esc, 2=class, 3=class+esc */
 
 			INITBUFFER(lex_ctx);
 			for (;;) {
@@ -1086,7 +1086,7 @@ static void parse_input_element_raw(duk_lexer_ctx *lex_ctx,
 		out_token->num = val;
 		advtok = ADVTOK(0, DUK_TOK_NUMBER);
 	} else if (x == '"' || x == '\'') {
-		int quote = x;	/* duk_u8 type yields larger code */
+		int quote = x;	/* duk_uint8_t type yields larger code */
 		int adv;
 
 		INITBUFFER(lex_ctx);
@@ -1373,8 +1373,8 @@ void duk_lexer_parse_re_token(duk_lexer_ctx *lex_ctx, duk_re_token *out_token) {
 	}
 	case '{': {
 		/* Production allows 'DecimalDigits', including leading zeroes */
-		duk_u32 val1 = 0;
-		duk_u32 val2 = DUK_RE_QUANTIFIER_INFINITE;
+		duk_uint32_t val1 = 0;
+		duk_uint32_t val2 = DUK_RE_QUANTIFIER_INFINITE;
 		int digits = 0;
 		for (;;) {
 			ADVANCE(lex_ctx, 1);	/* eat '{' on entry */
@@ -1502,7 +1502,7 @@ void duk_lexer_parse_re_token(duk_lexer_ctx *lex_ctx, duk_re_token *out_token) {
 				advtok = ADVTOK(2, DUK_RETOK_ATOM_CHAR);
 			} else {
 				/* FIXME: shared parsing? */
-				duk_u32 val = 0;
+				duk_uint32_t val = 0;
 				int i;
 				for (i = 0; ; i++) {
 					if (i >= MAX_REGEXP_DECIMAL_ESCAPE_DIGITS) {
@@ -1623,20 +1623,20 @@ void duk_lexer_parse_re_token(duk_lexer_ctx *lex_ctx, duk_re_token *out_token) {
 static void emit_u16_direct_ranges(duk_lexer_ctx *lex_ctx,
                                    duk_re_range_callback gen_range,
                                    void *userdata,
-                                   duk_u16 *ranges,
+                                   duk_uint16_t *ranges,
                                    int num) {
-	duk_u16 *ranges_end = ranges + num;
+	duk_uint16_t *ranges_end = ranges + num;
 	while (ranges < ranges_end) {
 		/* mark range 'direct', bypass canonicalization (see Wiki) */
-		gen_range(userdata, ranges[0], ranges[1], 1);
+		gen_range(userdata, (duk_codepoint_t) ranges[0], (duk_codepoint_t) ranges[1], 1);
 		ranges += 2;
 	}
 }
 
 void duk_lexer_parse_re_ranges(duk_lexer_ctx *lex_ctx, duk_re_range_callback gen_range, void *userdata) {
-	duk_i32 start = -1;
+	duk_int32_t start = -1;
 	int dash = 0;
-	duk_i32 ch;
+	duk_int32_t ch;
 
 	DUK_DDPRINT("parsing regexp ranges");
 
@@ -1654,7 +1654,7 @@ void duk_lexer_parse_re_ranges(duk_lexer_ctx *lex_ctx, duk_re_range_callback gen
 		} else if (x == ']') {
 			DUK_ASSERT(!dash);	/* lookup should prevent this */
 			if (start >= 0) {
-				gen_range(userdata, start, start, 0);
+				gen_range(userdata, (duk_codepoint_t) start, (duk_codepoint_t) start, 0);
 			}
 			break;
 		} else if (x == '-') {
@@ -1718,42 +1718,42 @@ void duk_lexer_parse_re_ranges(duk_lexer_ctx *lex_ctx, duk_re_range_callback gen
 				                       gen_range,
 				                       userdata,
 				                       duk_unicode_re_ranges_digit,
-				                       sizeof(duk_unicode_re_ranges_digit) / sizeof(duk_u16));
+				                       sizeof(duk_unicode_re_ranges_digit) / sizeof(duk_uint16_t));
 				ch = -1;
 			} else if (x == 'D') {
 				emit_u16_direct_ranges(lex_ctx,
 				                       gen_range,
 				                       userdata,
 				                       duk_unicode_re_ranges_not_digit,
-				                       sizeof(duk_unicode_re_ranges_not_digit) / sizeof(duk_u16));
+				                       sizeof(duk_unicode_re_ranges_not_digit) / sizeof(duk_uint16_t));
 				ch = -1;
 			} else if (x == 's') {
 				emit_u16_direct_ranges(lex_ctx,
 				                       gen_range,
 				                       userdata,
 				                       duk_unicode_re_ranges_white,
-				                       sizeof(duk_unicode_re_ranges_white) / sizeof(duk_u16));
+				                       sizeof(duk_unicode_re_ranges_white) / sizeof(duk_uint16_t));
 				ch = -1;
 			} else if (x == 'S') {
 				emit_u16_direct_ranges(lex_ctx,
 				                       gen_range,
 				                       userdata,
 				                       duk_unicode_re_ranges_not_white,
-				                       sizeof(duk_unicode_re_ranges_not_white) / sizeof(duk_u16));
+				                       sizeof(duk_unicode_re_ranges_not_white) / sizeof(duk_uint16_t));
 				ch = -1;
 			} else if (x == 'w') {
 				emit_u16_direct_ranges(lex_ctx,
 				                       gen_range,
 				                       userdata,
 				                       duk_unicode_re_ranges_wordchar,
-				                       sizeof(duk_unicode_re_ranges_wordchar) / sizeof(duk_u16));
+				                       sizeof(duk_unicode_re_ranges_wordchar) / sizeof(duk_uint16_t));
 				ch = -1;
 			} else if (x == 'W') {
 				emit_u16_direct_ranges(lex_ctx,
 				                       gen_range,
 				                       userdata,
 				                       duk_unicode_re_ranges_not_wordchar,
-				                       sizeof(duk_unicode_re_ranges_not_wordchar) / sizeof(duk_u16));
+				                       sizeof(duk_unicode_re_ranges_not_wordchar) / sizeof(duk_uint16_t));
 				ch = -1;
 			} else if (ISDIGIT(x)) {
 				/* DecimalEscape, only \0 is allowed, no leading zeroes are allowed */
@@ -1788,7 +1788,7 @@ void duk_lexer_parse_re_ranges(duk_lexer_ctx *lex_ctx, duk_re_range_callback gen
 					DUK_ERROR(lex_ctx->thr, DUK_ERR_SYNTAX_ERROR,
 					          "invalid range");
 				} else {
-					gen_range(userdata, start, start, 0);
+					gen_range(userdata, (duk_codepoint_t) start, (duk_codepoint_t) start, 0);
 					start = -1;
 					/* dash is already 0 */
 				}
@@ -1800,11 +1800,11 @@ void duk_lexer_parse_re_ranges(duk_lexer_ctx *lex_ctx, duk_re_range_callback gen
 						DUK_ERROR(lex_ctx->thr, DUK_ERR_SYNTAX_ERROR,
 						          "invalid range");
 					}
-					gen_range(userdata, start, ch, 0);
+					gen_range(userdata, (duk_codepoint_t) start, (duk_codepoint_t) ch, 0);
 					start = -1;
 					dash = 0;
 				} else {
-					gen_range(userdata, start, start, 0);
+					gen_range(userdata, (duk_codepoint_t) start, (duk_codepoint_t) start, 0);
 					start = ch;
 					/* dash is already 0 */
 				}

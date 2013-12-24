@@ -315,7 +315,7 @@ static void handle_bound_chain_for_call(duk_hthread *thr,
 	duk_context *ctx = (duk_context *) thr;
 	int num_stack_args;
 	duk_hobject *func;
-	duk_u32 sanity;
+	duk_uint32_t sanity;
 
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(p_num_stack_args != NULL);
@@ -543,7 +543,7 @@ int duk_handle_call(duk_hthread *thr,
 	int entry_call_recursion_depth;
 	int need_setjmp;
 	duk_hthread *entry_curr_thread;
-	duk_u8 entry_thread_state;
+	duk_uint8_t entry_thread_state;
 	int idx_func;         /* valstack index of 'func' and retval (relative to entry valstack_bottom) */
 	int idx_args;         /* valstack index of start of args (arg1) (relative to entry valstack_bottom) */
 	int nargs;            /* # argument registers target function wants (< 0 => "as is") */
@@ -720,7 +720,7 @@ int duk_handle_call(duk_hthread *thr,
 		/* XXX: should setjmp catcher be responsible for this instead? */
 		thr->heap->call_recursion_depth = entry_call_recursion_depth;
 		duk_err_longjmp(thr);
-		DUK_NEVER_HERE();
+		DUK_UNREACHABLE();
 	}
 
 	duk_hthread_catchstack_unwind(thr, entry_catchstack_top);
@@ -798,7 +798,7 @@ int duk_handle_call(duk_hthread *thr,
 		DUK_DDPRINT("ignoring reclimit for this call (probably an errhandler call)");
 	} else {	
 		if (thr->heap->call_recursion_depth >= thr->heap->call_recursion_limit) {
-			DUK_ERROR(thr, DUK_ERR_INTERNAL_ERROR, "maximum C call stack depth reached");
+			DUK_ERROR(thr, DUK_ERR_RANGE_ERROR, "C call stack depth limit");
 		}
 		thr->heap->call_recursion_depth++;
 	}
@@ -913,14 +913,19 @@ int duk_handle_call(duk_hthread *thr,
 	}
 	if (call_flags & DUK_CALL_FLAG_CONSTRUCTOR_CALL) {
 		act->flags |= DUK_ACT_FLAG_CONSTRUCT;
-		act->flags |= DUK_ACT_FLAG_PREVENT_YIELD;
+		/*act->flags |= DUK_ACT_FLAG_PREVENT_YIELD;*/
 	}
 	if (DUK_HOBJECT_IS_NATIVEFUNCTION(func)) {
-		act->flags |= DUK_ACT_FLAG_PREVENT_YIELD;
+		/*act->flags |= DUK_ACT_FLAG_PREVENT_YIELD;*/
 	}
 	if (call_flags & DUK_CALL_FLAG_DIRECT_EVAL) {
 		act->flags |= DUK_ACT_FLAG_DIRECT_EVAL;
 	}
+
+	/* As a first approximation, all calls except Ecmascript-to-Ecmascript
+	 * calls prevent a yield.
+	 */
+	act->flags |= DUK_ACT_FLAG_PREVENT_YIELD;
 
 	act->func = func;
 	act->var_env = NULL;
@@ -1030,7 +1035,7 @@ int duk_handle_call(duk_hthread *thr,
 	} else {
 		goto native_call;
 	}
-	DUK_NEVER_HERE();
+	DUK_UNREACHABLE();
 
 	/*
 	 *  Native (C) call
@@ -1064,7 +1069,7 @@ int duk_handle_call(duk_hthread *thr,
 
 	if (rc < 0) {
 		duk_error_throw_from_negative_rc(thr, rc);
-		DUK_NEVER_HERE();
+		DUK_UNREACHABLE();
 	} else if (rc > 1) {
 		DUK_ERROR(thr, DUK_ERR_API_ERROR, "c function returned invalid rc");
 	}
@@ -1252,7 +1257,7 @@ int duk_handle_call(duk_hthread *thr,
 
  thread_state_error:
 	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "invalid thread state for call (%d)", thr->state);
-	DUK_NEVER_HERE();
+	DUK_UNREACHABLE();
 	return DUK_ERR_EXEC_ERROR;  /* never executed */
 }
 
@@ -1365,7 +1370,7 @@ int duk_handle_safe_call(duk_hthread *thr,
 	int entry_catchstack_top;
 	int entry_call_recursion_depth;
 	duk_hthread *entry_curr_thread;
-	duk_u8 entry_thread_state;
+	duk_uint8_t entry_thread_state;
 	duk_jmpbuf *old_jmpbuf_ptr = NULL;
 	duk_hobject *old_errhandler = NULL;
 	duk_jmpbuf our_jmpbuf;
@@ -1528,7 +1533,7 @@ int duk_handle_safe_call(duk_hthread *thr,
 	DUK_ASSERT(thr->heap->call_recursion_depth >= 0);
 	DUK_ASSERT(thr->heap->call_recursion_depth <= thr->heap->call_recursion_limit);
 	if (thr->heap->call_recursion_depth >= thr->heap->call_recursion_limit) {
-		DUK_ERROR(thr, DUK_ERR_INTERNAL_ERROR, "maximum C call stack depth reached");
+		DUK_ERROR(thr, DUK_ERR_RANGE_ERROR, "C call stack depth limit");
 	}
 	thr->heap->call_recursion_depth++;
 
@@ -1618,7 +1623,7 @@ int duk_handle_safe_call(duk_hthread *thr,
 
  thread_state_error:
 	DUK_ERROR(thr, DUK_ERR_TYPE_ERROR, "invalid thread state for safe_call (%d)", thr->state);
-	DUK_NEVER_HERE();
+	DUK_UNREACHABLE();
 	return DUK_ERR_EXEC_ERROR;  /* never executed */
 }
 

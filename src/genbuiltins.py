@@ -37,6 +37,7 @@ import json
 import math
 import struct
 import optparse
+import copy
 
 import dukutil
 import genstrings
@@ -110,6 +111,7 @@ STRING_CHAR_BITS = 7
 LENGTH_PROP_BITS = 3
 NARGS_BITS = 3
 PROP_TYPE_BITS = 3
+MAGIC_BITS = 16
 
 NARGS_VARARGS_MARKER = 0x07
 NO_CLASS_MARKER = 0x00   # 0 = DUK_HOBJECT_CLASS_UNUSED 
@@ -130,6 +132,52 @@ PROPDESC_FLAG_WRITABLE =     (1 << 0)
 PROPDESC_FLAG_ENUMERABLE =   (1 << 1)
 PROPDESC_FLAG_CONFIGURABLE = (1 << 2)
 PROPDESC_FLAG_ACCESSOR =     (1 << 3)  # unused now
+
+# magic values for Date built-in, must match duk_builtin_date.c
+BI_DATE_FLAG_NAN_TO_ZERO =        (1 << 0)
+BI_DATE_FLAG_NAN_TO_RANGE_ERROR = (1 << 1)
+BI_DATE_FLAG_ONEBASED =           (1 << 2)
+BI_DATE_FLAG_LOCALTIME =          (1 << 3)
+BI_DATE_FLAG_SUB1900 =            (1 << 4)
+BI_DATE_FLAG_TOSTRING_DATE =      (1 << 5)
+BI_DATE_FLAG_TOSTRING_TIME =      (1 << 6)
+BI_DATE_FLAG_TOSTRING_LOCALE =    (1 << 7)
+BI_DATE_FLAG_TIMESETTER =         (1 << 8)
+BI_DATE_FLAG_YEAR_FIXUP =         (1 << 9)
+BI_DATE_FLAG_SEP_T =              (1 << 10)
+BI_DATE_IDX_YEAR =           0
+BI_DATE_IDX_MONTH =          1
+BI_DATE_IDX_DAY =            2
+BI_DATE_IDX_HOUR =           3
+BI_DATE_IDX_MINUTE =         4
+BI_DATE_IDX_SECOND =         5
+BI_DATE_IDX_MILLISECOND =    6
+BI_DATE_IDX_WEEKDAY =        7
+
+# magic values for Array built-in
+BI_ARRAY_ITER_EVERY =    0
+BI_ARRAY_ITER_SOME =     1
+BI_ARRAY_ITER_FOREACH =  2
+BI_ARRAY_ITER_MAP =      3
+BI_ARRAY_ITER_FILTER =   4
+
+# magic values for Math built-in
+BI_MATH_FABS_IDX =   0
+BI_MATH_ACOS_IDX =   1
+BI_MATH_ASIN_IDX =   2
+BI_MATH_ATAN_IDX =   3
+BI_MATH_CEIL_IDX =   4
+BI_MATH_COS_IDX =    5
+BI_MATH_EXP_IDX =    6
+BI_MATH_FLOOR_IDX =  7
+BI_MATH_LOG_IDX =    8
+BI_MATH_ROUND_IDX =  9
+BI_MATH_SIN_IDX =    10
+BI_MATH_SQRT_IDX =   11
+BI_MATH_TAN_IDX =    12
+
+BI_MATH_ATAN2_IDX =  0
+BI_MATH_POW_IDX =    1
 
 # numeric indices must match duk_hobject.h class numbers
 _classnames = [
@@ -375,9 +423,9 @@ bi_array_prototype = {
 	'values': [],
 	'functions': [
 		{ 'name': 'toString',			'native': 'duk_builtin_array_prototype_to_string',		'length': 0 },
-		{ 'name': 'toLocaleString',		'native': 'duk_builtin_array_prototype_to_locale_string',	'length': 0 },
+		{ 'name': 'toLocaleString',		'native': 'duk_builtin_array_prototype_join_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 1 } },   # magic: to_locale_string, here 1
 		{ 'name': 'concat',			'native': 'duk_builtin_array_prototype_concat',			'length': 1,	'varargs': True },
-		{ 'name': 'join',			'native': 'duk_builtin_array_prototype_join',			'length': 1 },
+		{ 'name': 'join',			'native': 'duk_builtin_array_prototype_join_shared',		'length': 1,	'magic': { 'type': 'plain', 'value': 0 } },   # magic: to_locale_string, here 0
 		{ 'name': 'pop',			'native': 'duk_builtin_array_prototype_pop',			'length': 0 },
 		{ 'name': 'push',			'native': 'duk_builtin_array_prototype_push',			'length': 1,	'varargs': True },
 		{ 'name': 'reverse',			'native': 'duk_builtin_array_prototype_reverse',		'length': 0 },
@@ -386,15 +434,15 @@ bi_array_prototype = {
 		{ 'name': 'sort',			'native': 'duk_builtin_array_prototype_sort',			'length': 1 },
 		{ 'name': 'splice',			'native': 'duk_builtin_array_prototype_splice',			'length': 2,	'varargs': True },
 		{ 'name': 'unshift',			'native': 'duk_builtin_array_prototype_unshift',		'length': 1,	'varargs': True },
-		{ 'name': 'indexOf',			'native': 'duk_builtin_array_prototype_index_of',		'length': 1,	'varargs': True },
-		{ 'name': 'lastIndexOf',		'native': 'duk_builtin_array_prototype_last_index_of',		'length': 1,	'varargs': True },
-		{ 'name': 'every',			'native': 'duk_builtin_array_prototype_every',			'length': 1,	'nargs': 2 },
-		{ 'name': 'some',			'native': 'duk_builtin_array_prototype_some',			'length': 1,	'nargs': 2 },
-		{ 'name': 'forEach',			'native': 'duk_builtin_array_prototype_for_each',		'length': 1,	'nargs': 2 },
-		{ 'name': 'map',			'native': 'duk_builtin_array_prototype_map',			'length': 1,	'nargs': 2 },
-		{ 'name': 'filter',			'native': 'duk_builtin_array_prototype_filter',			'length': 1,	'nargs': 2 },
-		{ 'name': 'reduce',			'native': 'duk_builtin_array_prototype_reduce',			'length': 1,	'varargs': True },
-		{ 'name': 'reduceRight',		'native': 'duk_builtin_array_prototype_reduce_right',		'length': 1,	'varargs': True },
+		{ 'name': 'indexOf',			'native': 'duk_builtin_array_prototype_indexof_shared',		'length': 1,	'varargs': True,	'magic': { 'type': 'plain', 'value': 1 } },   # magic: idx_step = +1
+		{ 'name': 'lastIndexOf',		'native': 'duk_builtin_array_prototype_indexof_shared',		'length': 1,	'varargs': True,	'magic': { 'type': 'plain', 'value': -1 } },  # magic: idx_step = -1
+		{ 'name': 'every',			'native': 'duk_builtin_array_prototype_iter_shared',		'length': 1,	'nargs': 2,	'magic': { 'type': 'plain', 'value': BI_ARRAY_ITER_EVERY } },
+		{ 'name': 'some',			'native': 'duk_builtin_array_prototype_iter_shared',		'length': 1,	'nargs': 2,	'magic': { 'type': 'plain', 'value': BI_ARRAY_ITER_SOME } },
+		{ 'name': 'forEach',			'native': 'duk_builtin_array_prototype_iter_shared',		'length': 1,	'nargs': 2,	'magic': { 'type': 'plain', 'value': BI_ARRAY_ITER_FOREACH } },
+		{ 'name': 'map',			'native': 'duk_builtin_array_prototype_iter_shared',		'length': 1,	'nargs': 2,	'magic': { 'type': 'plain', 'value': BI_ARRAY_ITER_MAP } },
+		{ 'name': 'filter',			'native': 'duk_builtin_array_prototype_iter_shared',		'length': 1,	'nargs': 2,	'magic': { 'type': 'plain', 'value': BI_ARRAY_ITER_FILTER } },
+		{ 'name': 'reduce',			'native': 'duk_builtin_array_prototype_reduce_shared',		'length': 1,	'varargs': True,	'magic': { 'type': 'plain', 'value': 1 } },   # magic: idx_step = +1
+		{ 'name': 'reduceRight',		'native': 'duk_builtin_array_prototype_reduce_shared',		'length': 1,	'varargs': True,	'magic': { 'type': 'plain', 'value': -1 } },  # magic: idx_step = -1
 	],
 }
 
@@ -493,8 +541,8 @@ bi_boolean_prototype = {
 		{ 'name': internal('value'),            'value': False,		'attributes': '' },
 	],
 	'functions': [
-		{ 'name': 'toString',			'native': 'duk_builtin_boolean_prototype_to_string',		'length': 0 },
-		{ 'name': 'valueOf',			'native': 'duk_builtin_boolean_prototype_value_of',		'length': 0 },
+		{ 'name': 'toString',			'native': 'duk_builtin_boolean_prototype_tostring_shared',	'length': 0,	'magic': { 'type': 'plain', 'value': 1 } },  # magic = coerce_tostring
+		{ 'name': 'valueOf',			'native': 'duk_builtin_boolean_prototype_tostring_shared',	'length': 0,	'magic': { 'type': 'plain', 'value': 0 } },  # magic = coerce_tostring
 	],
 }
 
@@ -578,6 +626,10 @@ bi_date_prototype = {
 	# behavior so they share the same C function, but have different
 	# function instances.
 
+	# Getters, setters, and string conversion functions use shared native
+	# helpers and the function 'magic' value is used to pass flags and
+	# parameters to the helpers.
+
 	'values': [
 		# Internal date value (E5 Section 15.9.5).
 		#
@@ -592,57 +644,57 @@ bi_date_prototype = {
 		{ 'name': internal('value'),            'value': DBL_NAN,	'attributes': 'w' }
 	],
 	'functions': [
-		{ 'name': 'toString',			'native': 'duk_builtin_date_prototype_to_string',		'length': 0 },
-		{ 'name': 'toDateString',		'native': 'duk_builtin_date_prototype_to_date_string',		'length': 0 },
-		{ 'name': 'toTimeString',		'native': 'duk_builtin_date_prototype_to_time_string',		'length': 0 },
-		{ 'name': 'toLocaleString',		'native': 'duk_builtin_date_prototype_to_locale_string',	'length': 0 },
-		{ 'name': 'toLocaleDateString',		'native': 'duk_builtin_date_prototype_to_locale_date_string',	'length': 0 },
-		{ 'name': 'toLocaleTimeString',		'native': 'duk_builtin_date_prototype_to_locale_time_string',	'length': 0 },
+		{ 'name': 'toString',			'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_DATE + BI_DATE_FLAG_TOSTRING_TIME + BI_DATE_FLAG_LOCALTIME } },
+		{ 'name': 'toDateString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_DATE + BI_DATE_FLAG_LOCALTIME } },
+		{ 'name': 'toTimeString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_TIME + BI_DATE_FLAG_LOCALTIME } },
+		{ 'name': 'toLocaleString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_DATE + BI_DATE_FLAG_TOSTRING_TIME + BI_DATE_FLAG_TOSTRING_LOCALE + BI_DATE_FLAG_LOCALTIME } },
+		{ 'name': 'toLocaleDateString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_DATE + BI_DATE_FLAG_TOSTRING_LOCALE + BI_DATE_FLAG_LOCALTIME } },
+		{ 'name': 'toLocaleTimeString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_TIME + BI_DATE_FLAG_TOSTRING_LOCALE + BI_DATE_FLAG_LOCALTIME } },
+		{ 'name': 'toUTCString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_DATE + BI_DATE_FLAG_TOSTRING_TIME } },
+		{ 'name': 'toISOString',		'native': 'duk_builtin_date_prototype_tostring_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TOSTRING_DATE + BI_DATE_FLAG_TOSTRING_TIME + BI_DATE_FLAG_NAN_TO_RANGE_ERROR + BI_DATE_FLAG_SEP_T } },
+		{ 'name': 'toJSON',			'native': 'duk_builtin_date_prototype_to_json',			'length': 1 },
 		{ 'name': 'valueOf',			'native': 'duk_builtin_date_prototype_value_of',		'length': 0 },
 		{ 'name': 'getTime',			'native': 'duk_builtin_date_prototype_value_of',		'length': 0 },  # Native function shared on purpose
-		{ 'name': 'getFullYear',		'native': 'duk_builtin_date_prototype_get_full_year',		'length': 0 },
-		{ 'name': 'getUTCFullYear',		'native': 'duk_builtin_date_prototype_get_utc_full_year',	'length': 0 },
-		{ 'name': 'getMonth',			'native': 'duk_builtin_date_prototype_get_month',		'length': 0 },
-		{ 'name': 'getUTCMonth',		'native': 'duk_builtin_date_prototype_get_utc_month',		'length': 0 },
-		{ 'name': 'getDate',			'native': 'duk_builtin_date_prototype_get_date',		'length': 0 },
-		{ 'name': 'getUTCDate',			'native': 'duk_builtin_date_prototype_get_utc_date',		'length': 0 },
-		{ 'name': 'getDay',			'native': 'duk_builtin_date_prototype_get_day',			'length': 0 },
-		{ 'name': 'getUTCDay',			'native': 'duk_builtin_date_prototype_get_utc_day',		'length': 0 },
-		{ 'name': 'getHours',			'native': 'duk_builtin_date_prototype_get_hours',		'length': 0 },
-		{ 'name': 'getUTCHours',		'native': 'duk_builtin_date_prototype_get_utc_hours',		'length': 0 },
-		{ 'name': 'getMinutes',			'native': 'duk_builtin_date_prototype_get_minutes',		'length': 0 },
-		{ 'name': 'getUTCMinutes',		'native': 'duk_builtin_date_prototype_get_utc_minutes',		'length': 0 },
-		{ 'name': 'getSeconds',			'native': 'duk_builtin_date_prototype_get_seconds',		'length': 0 },
-		{ 'name': 'getUTCSeconds',		'native': 'duk_builtin_date_prototype_get_utc_seconds',		'length': 0 },
-		{ 'name': 'getMilliseconds',		'native': 'duk_builtin_date_prototype_get_milliseconds',	'length': 0 },
-		{ 'name': 'getUTCMilliseconds',		'native': 'duk_builtin_date_prototype_get_utc_milliseconds',	'length': 0 },
+		{ 'name': 'getFullYear',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_YEAR << 12) } },
+		{ 'name': 'getUTCFullYear',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_YEAR << 12) } },
+		{ 'name': 'getMonth',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_MONTH << 12) } },
+		{ 'name': 'getUTCMonth',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_MONTH << 12) } },
+		{ 'name': 'getDate',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_ONEBASED + BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_DAY << 12) } },
+		{ 'name': 'getUTCDate',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_ONEBASED + (BI_DATE_IDX_DAY << 12) } },
+		{ 'name': 'getDay',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_WEEKDAY << 12) } },
+		{ 'name': 'getUTCDay',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_WEEKDAY << 12) } },
+		{ 'name': 'getHours',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_HOUR << 12) } },
+		{ 'name': 'getUTCHours',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_HOUR << 12) } },
+		{ 'name': 'getMinutes',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_MINUTE << 12) } },
+		{ 'name': 'getUTCMinutes',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_MINUTE << 12) } },
+		{ 'name': 'getSeconds',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_SECOND << 12) } },
+		{ 'name': 'getUTCSeconds',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_SECOND << 12) } },
+		{ 'name': 'getMilliseconds',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (BI_DATE_IDX_MILLISECOND << 12) } },
+		{ 'name': 'getUTCMilliseconds',		'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'magic': { 'type': 'plain', 'value': 0 + (BI_DATE_IDX_MILLISECOND << 12) } },
 		{ 'name': 'getTimezoneOffset',		'native': 'duk_builtin_date_prototype_get_timezone_offset',	'length': 0 },
 		{ 'name': 'setTime',			'native': 'duk_builtin_date_prototype_set_time',		'length': 1 },
-		{ 'name': 'setMilliseconds',		'native': 'duk_builtin_date_prototype_set_milliseconds',	'length': 1 },
-		{ 'name': 'setUTCMilliseconds',		'native': 'duk_builtin_date_prototype_set_utc_milliseconds',	'length': 1 },
-		{ 'name': 'setSeconds',			'native': 'duk_builtin_date_prototype_set_seconds',		'length': 2,	'varargs': True },
-		{ 'name': 'setUTCSeconds',		'native': 'duk_builtin_date_prototype_set_utc_seconds',		'length': 2,	'varargs': True },
-		{ 'name': 'setMinutes',			'native': 'duk_builtin_date_prototype_set_minutes',		'length': 3,	'varargs': True },
-		{ 'name': 'setUTCMinutes',		'native': 'duk_builtin_date_prototype_set_utc_minutes',		'length': 3,	'varargs': True },
-		{ 'name': 'setHours',			'native': 'duk_builtin_date_prototype_set_hours',		'length': 4,	'varargs': True },
-		{ 'name': 'setUTCHours',		'native': 'duk_builtin_date_prototype_set_utc_hours',		'length': 4,	'varargs': True },
-		{ 'name': 'setDate',			'native': 'duk_builtin_date_prototype_set_date',		'length': 1 },
-		{ 'name': 'setUTCDate',			'native': 'duk_builtin_date_prototype_set_utc_date',		'length': 1 },
-		{ 'name': 'setMonth',			'native': 'duk_builtin_date_prototype_set_month',		'length': 2,	'varargs': True },
-		{ 'name': 'setUTCMonth',		'native': 'duk_builtin_date_prototype_set_utc_month',		'length': 2,	'varargs': True },
-		{ 'name': 'setFullYear',		'native': 'duk_builtin_date_prototype_set_full_year',		'length': 3,	'varargs': True },
-		{ 'name': 'setUTCFullYear',		'native': 'duk_builtin_date_prototype_set_utc_full_year',	'length': 3,	'varargs': True },
-		{ 'name': 'toUTCString',		'native': 'duk_builtin_date_prototype_to_utc_string',		'length': 0 },
-		{ 'name': 'toISOString',		'native': 'duk_builtin_date_prototype_to_iso_string',		'length': 0 },
-		{ 'name': 'toJSON',			'native': 'duk_builtin_date_prototype_to_json',			'length': 1 },
+		{ 'name': 'setMilliseconds',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 1,				'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + BI_DATE_FLAG_LOCALTIME + (1 << 12) } },
+		{ 'name': 'setUTCMilliseconds',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 1,				'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + (1 << 12) } },
+		{ 'name': 'setSeconds',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 2,	'varargs': True, 	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + BI_DATE_FLAG_LOCALTIME + (2 << 12) } },
+		{ 'name': 'setUTCSeconds',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 2,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + (2 << 12) } },
+		{ 'name': 'setMinutes',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 3,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + BI_DATE_FLAG_LOCALTIME + (3 << 12) } },
+		{ 'name': 'setUTCMinutes',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 3,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + (3 << 12) } },
+		{ 'name': 'setHours',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 4,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + BI_DATE_FLAG_LOCALTIME + (4 << 12) } },
+		{ 'name': 'setUTCHours',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 4,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_TIMESETTER + (4 << 12) } },
+		{ 'name': 'setDate',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 1,				'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (1 << 12) } },
+		{ 'name': 'setUTCDate',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 1,				'magic': { 'type': 'plain', 'value': 0 + (1 << 12) } },
+		{ 'name': 'setMonth',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 2,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + (2 << 12) } },
+		{ 'name': 'setUTCMonth',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 2,	'varargs': True,	'magic': { 'type': 'plain', 'value': 0 + (2 << 12) } },
+		{ 'name': 'setFullYear',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 3,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_NAN_TO_ZERO + BI_DATE_FLAG_LOCALTIME + (3 << 12) } },
+		{ 'name': 'setUTCFullYear',		'native': 'duk_builtin_date_prototype_set_shared',		'length': 3,	'varargs': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_NAN_TO_ZERO + (3 << 12) } },
 
 		# Non-standard extensions: E5 Section B.2.4, B.2.5, B.2.6
 		#
 		# 'length' values are not given explicitly but follows the general rule.
 		# The lengths below agree with V8.
 
-		{ 'name': 'getYear',			'native': 'duk_builtin_date_prototype_get_year',		'length': 0,	'section_b': True },
-		{ 'name': 'setYear',			'native': 'duk_builtin_date_prototype_set_year',		'length': 1,	'section_b': True },
+		{ 'name': 'getYear',			'native': 'duk_builtin_date_prototype_get_shared',		'length': 0,	'section_b': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_LOCALTIME + BI_DATE_FLAG_SUB1900 + (BI_DATE_IDX_YEAR << 12) } },
+		{ 'name': 'setYear',			'native': 'duk_builtin_date_prototype_set_shared',		'length': 1,	'section_b': True,	'magic': { 'type': 'plain', 'value': BI_DATE_FLAG_NAN_TO_ZERO + BI_DATE_FLAG_YEAR_FIXUP + (3 << 12) } },
 
 		# Note: toGMTString() is required to initially be the same Function object as the initial
 		# Date.prototype.toUTCString.  In other words: Date.prototype.toGMTString === Date.prototype.toUTCString --> true.
@@ -739,9 +791,10 @@ bi_error_constructor = {
 	'name': 'Error',
 
 	'length': 1,
-	'native': 'duk_builtin_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -804,9 +857,10 @@ bi_eval_error_constructor = {
 	'name': 'EvalError',
 
 	'length': 1,
-	'native': 'duk_builtin_eval_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_eval_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -831,9 +885,10 @@ bi_range_error_constructor = {
 	'name': 'RangeError',
 
 	'length': 1,
-	'native': 'duk_builtin_range_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_range_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -858,9 +913,10 @@ bi_reference_error_constructor = {
 	'name': 'ReferenceError',
 
 	'length': 1,
-	'native': 'duk_builtin_reference_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_reference_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -885,9 +941,10 @@ bi_syntax_error_constructor = {
 	'name': 'SyntaxError',
 
 	'length': 1,
-	'native': 'duk_builtin_syntax_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_syntax_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -912,9 +969,10 @@ bi_type_error_constructor = {
 	'name': 'TypeError',
 
 	'length': 1,
-	'native': 'duk_builtin_type_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_type_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -939,9 +997,10 @@ bi_uri_error_constructor = {
 	'name': 'URIError',
 
 	'length': 1,
-	'native': 'duk_builtin_uri_error_constructor',
+	'native': 'duk_builtin_error_constructor_shared',
 	'callable': True,
 	'constructable': True,
+	'magic': { 'type': 'bidx', 'value': 'bi_uri_error_prototype' },
 
 	'values': [],
 	'functions': [],
@@ -976,24 +1035,24 @@ bi_math = {
 		{ 'name': 'SQRT2',			'value': DBL_SQRT2,		'attributes': '' },
 	],
 	'functions': [
-		{ 'name': 'abs',			'native': 'duk_builtin_math_object_abs',		'length': 1 },
-		{ 'name': 'acos',			'native': 'duk_builtin_math_object_acos',		'length': 1 },
-		{ 'name': 'asin',			'native': 'duk_builtin_math_object_asin',		'length': 1 },
-		{ 'name': 'atan',			'native': 'duk_builtin_math_object_atan',		'length': 1 },
-		{ 'name': 'atan2',			'native': 'duk_builtin_math_object_atan2',		'length': 2 },
-		{ 'name': 'ceil',			'native': 'duk_builtin_math_object_ceil',		'length': 1 },
-		{ 'name': 'cos',			'native': 'duk_builtin_math_object_cos',		'length': 1 },
-		{ 'name': 'exp',			'native': 'duk_builtin_math_object_exp',		'length': 1 },
-		{ 'name': 'floor',			'native': 'duk_builtin_math_object_floor',		'length': 1 },
-		{ 'name': 'log',			'native': 'duk_builtin_math_object_log',		'length': 1 },
+		{ 'name': 'abs',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_FABS_IDX } },
+		{ 'name': 'acos',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_ACOS_IDX } },
+		{ 'name': 'asin',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_ASIN_IDX } },
+		{ 'name': 'atan',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_ATAN_IDX } },
+		{ 'name': 'atan2',			'native': 'duk_builtin_math_object_twoarg_shared',	'length': 2,	'magic': { 'type': 'plain', 'value': BI_MATH_ATAN2_IDX } },
+		{ 'name': 'ceil',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_CEIL_IDX } },
+		{ 'name': 'cos',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_COS_IDX } },
+		{ 'name': 'exp',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_EXP_IDX } },
+		{ 'name': 'floor',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_FLOOR_IDX } },
+		{ 'name': 'log',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_LOG_IDX } },
 		{ 'name': 'max',			'native': 'duk_builtin_math_object_max',		'length': 2,	'varargs': True },
 		{ 'name': 'min',			'native': 'duk_builtin_math_object_min',		'length': 2,	'varargs': True },
-		{ 'name': 'pow',			'native': 'duk_builtin_math_object_pow',		'length': 2 },
+		{ 'name': 'pow',			'native': 'duk_builtin_math_object_twoarg_shared',	'length': 2,	'magic': { 'type': 'plain', 'value': BI_MATH_POW_IDX } },
 		{ 'name': 'random',			'native': 'duk_builtin_math_object_random',		'length': 0 },
-		{ 'name': 'round',			'native': 'duk_builtin_math_object_round',		'length': 1 },
-		{ 'name': 'sin',			'native': 'duk_builtin_math_object_sin',		'length': 1 },
-		{ 'name': 'sqrt',			'native': 'duk_builtin_math_object_sqrt',		'length': 1 },
-		{ 'name': 'tan',			'native': 'duk_builtin_math_object_tan',		'length': 1 },
+		{ 'name': 'round',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_ROUND_IDX } },
+		{ 'name': 'sin',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_SIN_IDX } },
+		{ 'name': 'sqrt',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_SQRT_IDX } },
+		{ 'name': 'tan',			'native': 'duk_builtin_math_object_onearg_shared',	'length': 1,	'magic': { 'type': 'plain', 'value': BI_MATH_TAN_IDX } },
 	],
 }
 
@@ -1114,8 +1173,8 @@ bi_buffer_prototype = {
 	'values': [
 	],
 	'functions': [
-		{ 'name': 'toString',			'native': 'duk_builtin_buffer_prototype_to_string',		'length': 0 },
-		{ 'name': 'valueOf',			'native': 'duk_builtin_buffer_prototype_value_of',		'length': 0 },
+		{ 'name': 'toString',			'native': 'duk_builtin_buffer_prototype_tostring_shared',	'length': 0,	'magic': { 'type': 'plain', 'value': 1 } },  # magic = to_string
+		{ 'name': 'valueOf',			'native': 'duk_builtin_buffer_prototype_tostring_shared',	'length': 0,	'magic': { 'type': 'plain', 'value': 0 } },  # magic = to_string
 	],
 }
 
@@ -1144,8 +1203,8 @@ bi_pointer_prototype = {
 	'values': [
 	],
 	'functions': [
-		{ 'name': 'toString',			'native': 'duk_builtin_pointer_prototype_to_string',		'length': 0 },
-		{ 'name': 'valueOf',			'native': 'duk_builtin_pointer_prototype_value_of',		'length': 0 },
+		{ 'name': 'toString',			'native': 'duk_builtin_pointer_prototype_tostring_shared',	'length': 0,	'magic': { 'type': 'plain', 'value': 1 } },  # magic = to_string
+		{ 'name': 'valueOf',			'native': 'duk_builtin_pointer_prototype_tostring_shared',	'length': 0,	'magic': { 'type': 'plain', 'value': 0 } },  # magic = to_string
 	],
 }
 
@@ -1173,7 +1232,7 @@ bi_double_error = {
 #  Built-ins table.  The ordering determines ordering for the DUK_BIDX_XXX constants.
 #
 
-builtins = [
+builtins_orig = [
 	{ 'id': 'bi_global',				'info': bi_global },
 	{ 'id': 'bi_global_env',			'info': bi_global_env },
 	{ 'id': 'bi_object_constructor',		'info': bi_object_constructor },
@@ -1221,322 +1280,6 @@ builtins = [
 	{ 'id': 'bi_double_error',                      'info': bi_double_error },
 ]
 
-builtin_indexes = {}
-
-idx = 0
-for bi in builtins:
-	builtin_indexes[bi['id']] = idx
-	idx += 1
-
-#
-#  Functions to generate the init bitstream and headers/sources
-#
-
-native_func_hash = {}
-native_func_list = []
-
-# array workaround for Python scope
-count_builtins = [0]
-count_normal_props = [0]
-count_function_props = [0]
-
-def get_native_funcs(bi):
-	if bi.has_key('native'):
-		native_func = bi['native']
-		native_func_hash[native_func] = -1
-
-	for valspec in bi['values']:
-		if valspec.has_key('getter'):
-			native_func = valspec['getter']
-			native_func_hash[native_func] = -1
-		if valspec.has_key('setter'):
-			native_func = valspec['setter']
-			native_func_hash[native_func] = -1
-
-	for funspec in bi['functions']:
-		if funspec.has_key('native'):
-			native_func = funspec['native']
-			native_func_hash[native_func] = -1
-
-def number_native_funcs():
-	k = native_func_hash.keys()
-	k.sort()
-	idx = 0
-	for i in k:
-		native_func_hash[i] = idx
-		native_func_list.append(i)
-		idx += 1
-
-def encode_property_flags(flags):
-	# Note: must match duk_hobject.h
-
-	res = 0
-	nflags = 0
-	if 'w' in flags:
-		nflags += 1
-		res = res | PROPDESC_FLAG_WRITABLE
-	if 'e' in flags:
-		nflags += 1
-		res = res | PROPDESC_FLAG_ENUMERABLE
-	if 'c' in flags:
-		nflags += 1
-		res = res | PROPDESC_FLAG_CONFIGURABLE
-	if 'a' in flags:
-		nflags += 1
-		res = res | PROPDESC_FLAG_ACCESSOR
-
-	if nflags != len(flags):
-		raise Exception('unsupported flags: %s' % repr(flags))
-
-	return res
-
-def generate_properties_data_for_builtin(gb, gs, be, bi):
-	count_builtins[0] += 1
-
-	if bi.has_key('internal_prototype'):
-		be.bits(builtin_indexes[bi['internal_prototype']], BIDX_BITS)
-	else:
-		be.bits(NO_BIDX_MARKER, BIDX_BITS)
-
-	if bi.has_key('external_prototype'):
-		be.bits(builtin_indexes[bi['external_prototype']], BIDX_BITS)
-	else:
-		be.bits(NO_BIDX_MARKER, BIDX_BITS)
-
-	if bi.has_key('external_constructor'):
-		be.bits(builtin_indexes[bi['external_constructor']], BIDX_BITS)
-	else:
-		be.bits(NO_BIDX_MARKER, BIDX_BITS)
-
-	# Filter values and functions
-	values = []
-	for valspec in bi['values']:
-		if valspec.has_key('section_b') and valspec['section_b'] and not gb.ext_section_b:
-			continue
-		if valspec.has_key('browser') and valspec['browser'] and not gb.ext_browser_like:
-			continue
-		values.append(valspec)
-
-	functions = []
-	for valspec in bi['functions']:
-		if valspec.has_key('section_b') and valspec['section_b'] and not gb.ext_section_b:
-			continue
-		if valspec.has_key('browser') and valspec['browser'] and not gb.ext_browser_like:
-			continue
-		functions.append(valspec)
-
-	be.bits(len(values), NUM_NORMAL_PROPS_BITS)
-
-	for valspec in values:
-		count_normal_props[0] += 1
-
-		# NOTE: we rely on there being less than 256 built-in strings
-		stridx = gs.stringToIndex(valspec['name'])
-		val = valspec.get('value')  # missing for accessors
-
-		be.bits(stridx, STRIDX_BITS)
-
-		if valspec['name'] == 'length':
-			default_attrs = LENGTH_PROPERTY_ATTRIBUTES
-		else:
-			default_attrs = DEFAULT_PROPERTY_ATTRIBUTES
-		attrs = default_attrs
-		if valspec.has_key('attributes'):
-			attrs = valspec['attributes']
-
-		# attribute check doesn't check for accessor flag; that is now
-		# automatically set by C code when value is an accessor type
-		if attrs != default_attrs:
-			#print 'non-default attributes: %s -> %r (default %r)' % (valspec['name'], attrs, default_attrs)
-			be.bits(1, 1)  # flag: have custom attributes
-			be.bits(encode_property_flags(attrs), PROP_FLAGS_BITS)
-		else:
-			be.bits(0, 1)  # flag: no custom attributes
-
-		if isinstance(val, bool):
-			if val == True:
-				be.bits(PROP_TYPE_BOOLEAN_TRUE, PROP_TYPE_BITS)
-			else:
-				be.bits(PROP_TYPE_BOOLEAN_FALSE, PROP_TYPE_BITS)
-		elif val == UNDEFINED:
-			be.bits(PROP_TYPE_UNDEFINED, PROP_TYPE_BITS)
-		elif isinstance(val, (float, int)):
-			be.bits(PROP_TYPE_DOUBLE, PROP_TYPE_BITS)
-			val = float(val)
-
-			# encoding of double must match target architecture byte order
-			bo = gb.byte_order
-			if bo == 'big':
-				data = struct.pack('>d', val)	# 01234567
-			elif bo == 'little':
-				data = struct.pack('<d', val)	# 76543210
-			elif bo == 'middle':	# arm
-				data = struct.pack('<d', val)	# 32107654
-				data = data[4:8] + data[0:4]
-			else:
-				raise Exception('unsupported byte order: %s' % repr(bo))
-
-			#print('DOUBLE: ' + data.encode('hex'))
-
-			if len(data) != 8:
-				raise Exception('internal error')
-			be.string(data)
-		elif isinstance(val, str) or isinstance(val, unicode):
-			if isinstance(val, unicode):
-				# Note: non-ASCII characters will not currently work,
-				# because bits/char is too low.
-				val = val.encode('utf-8')
-
-			if gs.hasString(val):
-				# String value is in built-in string table -> encode
-				# using a string index.  This saves some space,
-				# especially for the 'name' property of errors
-				# ('EvalError' etc).
-
-				stridx = gs.stringToIndex(val)
-				be.bits(PROP_TYPE_STRIDX, PROP_TYPE_BITS)
-				be.bits(stridx, STRIDX_BITS)
-			else:
-				# Not in string table -> encode as raw 7-bit value
-
-				be.bits(PROP_TYPE_STRING, PROP_TYPE_BITS)
-				be.bits(len(val), STRING_LENGTH_BITS)
-				for i in xrange(len(val)):
-					t = ord(val[i])
-					be.bits(t, STRING_CHAR_BITS)
-		elif isinstance(val, dict):
-			if val['type'] == 'builtin':
-				be.bits(PROP_TYPE_BUILTIN, PROP_TYPE_BITS)
-				be.bits(builtin_indexes[val['id']], BIDX_BITS)
-			else:
-				raise Exception('unsupported value: %s' % repr(val))
-		elif val is None and valspec.has_key('getter') and valspec.has_key('setter'):
-			be.bits(PROP_TYPE_ACCESSOR, PROP_TYPE_BITS)
-			natidx = native_func_hash[valspec['getter']]
-			be.bits(natidx, NATIDX_BITS)
-			natidx = native_func_hash[valspec['setter']]
-			be.bits(natidx, NATIDX_BITS)
-		else:
-			raise Exception('unsupported value: %s' % repr(val))
-
-	be.bits(len(functions), NUM_FUNC_PROPS_BITS)
-
-	for funspec in functions:
-		count_function_props[0] += 1
-
-		# NOTE: we rely on there being less than 256 built-in strings
-		# and built-in native functions
-
-		stridx = gs.stringToIndex(funspec['name'])
-		be.bits(stridx, STRIDX_BITS)
-
-		natidx = native_func_hash[funspec['native']]
-		be.bits(natidx, NATIDX_BITS)
-
-		length = funspec['length']
-		be.bits(length, LENGTH_PROP_BITS)
-
-		if funspec.has_key('varargs'):
-			be.bits(1, 1)  # flag: non-default nargs
-			be.bits(NARGS_VARARGS_MARKER, NARGS_BITS)
-		elif funspec.has_key('nargs'):
-			be.bits(1, 1)  # flag: non-default nargs
-			be.bits(funspec['nargs'], NARGS_BITS)
-		else:
-			be.bits(0, 1)  # flag: default nargs OK
-
-def generate_creation_data_for_builtin(gb, gs, be, bi):
-	class_num = classToNumber(bi['class'])
-	be.bits(class_num, CLASS_BITS)
-
-	if bi.has_key('length'):
-		be.bits(1, 1)  # flag: have length
-		be.bits(bi['length'], LENGTH_PROP_BITS)
-	else:
-		be.bits(0, 1)  # flag: no length
-
-	# This is a very unfortunate format; 'length' property of a top
-	# level object may be non-standard.  However, this is only the
-	# case for the Array prototype, whose 'length' property has the
-	# attributes expected of an Array instance.  This is handled
-	# with custom code in duk_hthread_builtins.c
-
-	len_attrs = LENGTH_PROPERTY_ATTRIBUTES
-	if bi.has_key('length_attributes'):
-		len_attrs = bi['length_attributes']
-
-	if len_attrs != LENGTH_PROPERTY_ATTRIBUTES:
-		if bi['class'] != 'Array':  # Array.prototype is the only one with this class
-			raise Exception('non-default length attribute for unexpected object')
-
-	# For 'Function' classed objects, emit the native function stuff.
-	# Unfortunately this is more or less a copy of what we do for
-	# function properties now.  This should be addressed if a rework
-	# on the init format is done.
-
-	if bi['class'] == 'Function':
-		length = bi['length']
-
-		natidx = native_func_hash[bi['native']]
-		be.bits(natidx, NATIDX_BITS)
-
-		stridx = gs.stringToIndex(bi['name'])
-		be.bits(stridx, STRIDX_BITS)
-
-		if bi.has_key('varargs'):
-			be.bits(1, 1)  # flag: non-default nargs
-			be.bits(NARGS_VARARGS_MARKER, NARGS_BITS)
-		elif bi.has_key('nargs'):
-			be.bits(1, 1)  # flag: non-default nargs
-			be.bits(bi['nargs'], NARGS_BITS)
-		else:
-			be.bits(0, 1)  # flag: default nargs OK
-
-	# All Function-classed global level objects are callable
-	# (have [[Call]]) but not all are constructable (have
-	# [[Construct]]).  Flag that.
-
-	if bi['class'] == 'Function':
-		assert(bi.has_key('callable'))
-		assert(bi['callable'] == True)
-
-		if bi.has_key('constructable') and bi['constructable'] == True:
-			be.bits(1, 1)	# flag: constructable
-		else:
-			be.bits(0, 1)	# flag: not constructable
-
-def generate_builtin_init_data(gb, gs):
-	be = dukutil.BitEncoder()
-
-	for bi in builtins:
-		get_native_funcs(bi['info'])
-	number_native_funcs()
-
-	# First, emit the control data required for creating correct
-	# objects.
-
-	for bi in builtins:
-		generate_creation_data_for_builtin(gb, gs, be, bi['info'])
-
-	# Then, emit object properties.
-
-	for bi in builtins:
-		generate_properties_data_for_builtin(gb, gs, be, bi['info'])
-
-	return be.getByteString()
-
-def write_native_func_array(genc):
-	genc.emitLine('/* native functions: %d */' % len(native_func_list))
-	genc.emitLine('duk_c_function duk_builtin_native_functions[] = {')
-	for i in native_func_list:
-		genc.emitLine('\t(duk_c_function) %s,' % i)
-	genc.emitLine('};')
-
-def generate_define_names(id):
-	t1 = id.upper().split('_')
-	t2 = '_'.join(t1[1:])  # bi_foo_bar -> FOO_BAR
-	return 'DUK_BIDX_' + t2, 'DUK_BUILTIN_' + t2
-
 #
 #  GenBuiltins
 #
@@ -1547,8 +1290,16 @@ class GenBuiltins:
 	ext_section_b = None
 	ext_browser_like = None
 
+	builtins = None
 	gs = None
 	init_data = None
+	native_func_hash = None
+	native_func_list = None
+	builtin_indexes = None
+
+	count_builtins = None
+	count_normal_props = None
+	count_function_props = None
 
 	def __init__(self, build_info = None, byte_order=None, ext_section_b=None, ext_browser_like=None):
 		self.build_info = build_info
@@ -1556,20 +1307,354 @@ class GenBuiltins:
 		self.ext_section_b = ext_section_b
 		self.ext_browser_like = ext_browser_like
 
+		self.builtins = copy.deepcopy(builtins_orig)
+		self.gs = None
+		self.init_data = None
+		self.native_func_hash = {}
+		self.native_func_list = []
+		self.builtin_indexes = {}
+
+		self.count_builtins = 0
+		self.count_normal_props = 0
+		self.count_function_props = 0
+
+	def findBuiltIn(self, id_):
+		for i in self.builtins:
+			if i['id'] == id_:
+				return i
+		return None
+
+	def initBuiltinIndex(self):
+		idx = 0
+		for bi in self.builtins:
+			self.builtin_indexes[bi['id']] = idx
+			idx += 1
+
+	def getNativeFuncs(self, bi):
+		if bi.has_key('native'):
+			native_func = bi['native']
+			self.native_func_hash[native_func] = -1
+
+		for valspec in bi['values']:
+			if valspec.has_key('getter'):
+				native_func = valspec['getter']
+				self.native_func_hash[native_func] = -1
+			if valspec.has_key('setter'):
+				native_func = valspec['setter']
+				self.native_func_hash[native_func] = -1
+
+		for funspec in bi['functions']:
+			if funspec.has_key('native'):
+				native_func = funspec['native']
+				self.native_func_hash[native_func] = -1
+	
+	def numberNativeFuncs(self):
+		k = self.native_func_hash.keys()
+		k.sort()
+		idx = 0
+		for i in k:
+			self.native_func_hash[i] = idx
+			self.native_func_list.append(i)
+			idx += 1
+
+	def writeNativeFuncArray(self, genc):
+		genc.emitLine('/* native functions: %d */' % len(self.native_func_list))
+		genc.emitLine('const duk_c_function duk_builtin_native_functions[] = {')
+		for i in self.native_func_list:
+			genc.emitLine('\t(duk_c_function) %s,' % i)
+		genc.emitLine('};')
+
+	def generateDefineNames(self, id):
+		t1 = id.upper().split('_')
+		t2 = '_'.join(t1[1:])  # bi_foo_bar -> FOO_BAR
+		return 'DUK_BIDX_' + t2, 'DUK_BUILTIN_' + t2
+
+	def encodePropertyFlags(self, flags):
+		# Note: must match duk_hobject.h
+
+		res = 0
+		nflags = 0
+		if 'w' in flags:
+			nflags += 1
+			res = res | PROPDESC_FLAG_WRITABLE
+		if 'e' in flags:
+			nflags += 1
+			res = res | PROPDESC_FLAG_ENUMERABLE
+		if 'c' in flags:
+			nflags += 1
+			res = res | PROPDESC_FLAG_CONFIGURABLE
+		if 'a' in flags:
+			nflags += 1
+			res = res | PROPDESC_FLAG_ACCESSOR
+
+		if nflags != len(flags):
+			raise Exception('unsupported flags: %s' % repr(flags))
+
+		return res
+
+	def resolveMagic(self, elem):
+		if elem is None:
+			return 0
+		assert(elem.has_key('type'))
+		if elem['type'] == 'bidx':
+			v = elem['value']
+			for i, bi in enumerate(self.builtins):
+				if bi['id'] == v:
+					#print(v, '->', i)
+					return i
+			raise Exception('invalid builtin index for magic: ' % repr(v))
+		elif elem['type'] == 'plain':
+			v = elem['value']
+			if not (v >= -0x8000 and v <= 0x7fff):
+				raise Exception('invalid plain value for magic: %s' % repr(v))
+			#print('MAGIC', v)
+			# Magic is a 16-bit signed value, but convert to 16-bit signed
+			# for encoding
+			return v & 0xffff
+		else:
+			raise Exception('invalid magic type: %s' % repr(elem['type']))
+
+	def generatePropertiesDataForBuiltin(self, be, bi):
+		self.count_builtins += 1
+
+		if bi.has_key('internal_prototype'):
+			be.bits(self.builtin_indexes[bi['internal_prototype']], BIDX_BITS)
+		else:
+			be.bits(NO_BIDX_MARKER, BIDX_BITS)
+
+		if bi.has_key('external_prototype'):
+			be.bits(self.builtin_indexes[bi['external_prototype']], BIDX_BITS)
+		else:
+			be.bits(NO_BIDX_MARKER, BIDX_BITS)
+
+		if bi.has_key('external_constructor'):
+			be.bits(self.builtin_indexes[bi['external_constructor']], BIDX_BITS)
+		else:
+			be.bits(NO_BIDX_MARKER, BIDX_BITS)
+
+		# Filter values and functions
+		values = []
+		for valspec in bi['values']:
+			if valspec.has_key('section_b') and valspec['section_b'] and not gb.ext_section_b:
+				continue
+			if valspec.has_key('browser') and valspec['browser'] and not gb.ext_browser_like:
+				continue
+			values.append(valspec)
+
+		functions = []
+		for valspec in bi['functions']:
+			if valspec.has_key('section_b') and valspec['section_b'] and not self.ext_section_b:
+				continue
+			if valspec.has_key('browser') and valspec['browser'] and not self.ext_browser_like:
+				continue
+			functions.append(valspec)
+
+		be.bits(len(values), NUM_NORMAL_PROPS_BITS)
+
+		for valspec in values:
+			self.count_normal_props += 1
+
+			# NOTE: we rely on there being less than 256 built-in strings
+			stridx = self.gs.stringToIndex(valspec['name'])
+			val = valspec.get('value')  # missing for accessors
+
+			be.bits(stridx, STRIDX_BITS)
+
+			if valspec['name'] == 'length':
+				default_attrs = LENGTH_PROPERTY_ATTRIBUTES
+			else:
+				default_attrs = DEFAULT_PROPERTY_ATTRIBUTES
+			attrs = default_attrs
+			if valspec.has_key('attributes'):
+				attrs = valspec['attributes']
+
+			# attribute check doesn't check for accessor flag; that is now
+			# automatically set by C code when value is an accessor type
+			if attrs != default_attrs:
+				#print 'non-default attributes: %s -> %r (default %r)' % (valspec['name'], attrs, default_attrs)
+				be.bits(1, 1)  # flag: have custom attributes
+				be.bits(self.encodePropertyFlags(attrs), PROP_FLAGS_BITS)
+			else:
+				be.bits(0, 1)  # flag: no custom attributes
+
+			if isinstance(val, bool):
+				if val == True:
+					be.bits(PROP_TYPE_BOOLEAN_TRUE, PROP_TYPE_BITS)
+				else:
+					be.bits(PROP_TYPE_BOOLEAN_FALSE, PROP_TYPE_BITS)
+			elif val == UNDEFINED:
+				be.bits(PROP_TYPE_UNDEFINED, PROP_TYPE_BITS)
+			elif isinstance(val, (float, int)):
+				be.bits(PROP_TYPE_DOUBLE, PROP_TYPE_BITS)
+				val = float(val)
+
+				# encoding of double must match target architecture byte order
+				bo = self.byte_order
+				if bo == 'big':
+					data = struct.pack('>d', val)	# 01234567
+				elif bo == 'little':
+					data = struct.pack('<d', val)	# 76543210
+				elif bo == 'middle':	# arm
+					data = struct.pack('<d', val)	# 32107654
+					data = data[4:8] + data[0:4]
+				else:
+					raise Exception('unsupported byte order: %s' % repr(bo))
+
+				#print('DOUBLE: ' + data.encode('hex'))
+
+				if len(data) != 8:
+					raise Exception('internal error')
+				be.string(data)
+			elif isinstance(val, str) or isinstance(val, unicode):
+				if isinstance(val, unicode):
+					# Note: non-ASCII characters will not currently work,
+					# because bits/char is too low.
+					val = val.encode('utf-8')
+
+				if self.gs.hasString(val):
+					# String value is in built-in string table -> encode
+					# using a string index.  This saves some space,
+					# especially for the 'name' property of errors
+					# ('EvalError' etc).
+	
+					stridx = self.gs.stringToIndex(val)
+					be.bits(PROP_TYPE_STRIDX, PROP_TYPE_BITS)
+					be.bits(stridx, STRIDX_BITS)
+				else:
+					# Not in string table -> encode as raw 7-bit value
+	
+					be.bits(PROP_TYPE_STRING, PROP_TYPE_BITS)
+					be.bits(len(val), STRING_LENGTH_BITS)
+					for i in xrange(len(val)):
+						t = ord(val[i])
+						be.bits(t, STRING_CHAR_BITS)
+			elif isinstance(val, dict):
+				if val['type'] == 'builtin':
+					be.bits(PROP_TYPE_BUILTIN, PROP_TYPE_BITS)
+					be.bits(self.builtin_indexes[val['id']], BIDX_BITS)
+				else:
+					raise Exception('unsupported value: %s' % repr(val))
+			elif val is None and valspec.has_key('getter') and valspec.has_key('setter'):
+				be.bits(PROP_TYPE_ACCESSOR, PROP_TYPE_BITS)
+				natidx = self.native_func_hash[valspec['getter']]
+				be.bits(natidx, NATIDX_BITS)
+				natidx = self.native_func_hash[valspec['setter']]
+				be.bits(natidx, NATIDX_BITS)
+			else:
+				raise Exception('unsupported value: %s' % repr(val))
+
+		be.bits(len(functions), NUM_FUNC_PROPS_BITS)
+
+		for funspec in functions:
+			self.count_function_props += 1
+
+			# NOTE: we rely on there being less than 256 built-in strings
+			# and built-in native functions
+
+			stridx = self.gs.stringToIndex(funspec['name'])
+			be.bits(stridx, STRIDX_BITS)
+
+			natidx = self.native_func_hash[funspec['native']]
+			be.bits(natidx, NATIDX_BITS)
+
+			length = funspec['length']
+			be.bits(length, LENGTH_PROP_BITS)
+
+			if funspec.has_key('varargs'):
+				be.bits(1, 1)  # flag: non-default nargs
+				be.bits(NARGS_VARARGS_MARKER, NARGS_BITS)
+			elif funspec.has_key('nargs'):
+				be.bits(1, 1)  # flag: non-default nargs
+				be.bits(funspec['nargs'], NARGS_BITS)
+			else:
+				be.bits(0, 1)  # flag: default nargs OK
+
+			# FIXME: make this check conditional to minimize bit count
+			# (there are quite a lot of function properties)
+			magic = self.resolveMagic(funspec.get('magic'))
+			if magic != 0:
+				assert(magic >= 0)
+				assert(magic < (1 << MAGIC_BITS))
+				be.bits(1, 1)
+				be.bits(magic, MAGIC_BITS)
+			else:
+				be.bits(0, 1)
+
+	def generateCreationDataForBuiltin(self, be, bi):
+		class_num = classToNumber(bi['class'])
+		be.bits(class_num, CLASS_BITS)
+
+		if bi.has_key('length'):
+			be.bits(1, 1)  # flag: have length
+			be.bits(bi['length'], LENGTH_PROP_BITS)
+		else:
+			be.bits(0, 1)  # flag: no length
+
+		# This is a very unfortunate format; 'length' property of a top
+		# level object may be non-standard.  However, this is only the
+		# case for the Array prototype, whose 'length' property has the
+		# attributes expected of an Array instance.  This is handled
+		# with custom code in duk_hthread_builtins.c
+
+		len_attrs = LENGTH_PROPERTY_ATTRIBUTES
+		if bi.has_key('length_attributes'):
+			len_attrs = bi['length_attributes']
+
+		if len_attrs != LENGTH_PROPERTY_ATTRIBUTES:
+			if bi['class'] != 'Array':  # Array.prototype is the only one with this class
+				raise Exception('non-default length attribute for unexpected object')
+
+		# For 'Function' classed objects, emit the native function stuff.
+		# Unfortunately this is more or less a copy of what we do for
+		# function properties now.  This should be addressed if a rework
+		# on the init format is done.
+
+		if bi['class'] == 'Function':
+			length = bi['length']
+
+			natidx = self.native_func_hash[bi['native']]
+			be.bits(natidx, NATIDX_BITS)
+
+			stridx = self.gs.stringToIndex(bi['name'])
+			be.bits(stridx, STRIDX_BITS)
+
+			if bi.has_key('varargs'):
+				be.bits(1, 1)  # flag: non-default nargs
+				be.bits(NARGS_VARARGS_MARKER, NARGS_BITS)
+			elif bi.has_key('nargs'):
+				be.bits(1, 1)  # flag: non-default nargs
+				be.bits(bi['nargs'], NARGS_BITS)
+			else:
+				be.bits(0, 1)  # flag: default nargs OK
+
+			# All Function-classed global level objects are callable
+			# (have [[Call]]) but not all are constructable (have
+			# [[Construct]]).  Flag that.
+
+			assert(bi.has_key('callable'))
+			assert(bi['callable'] == True)
+
+			if bi.has_key('constructable') and bi['constructable'] == True:
+				be.bits(1, 1)	# flag: constructable
+			else:
+				be.bits(0, 1)	# flag: not constructable
+
+			magic = self.resolveMagic(bi.get('magic'))
+			if magic != 0:
+				assert(magic >= 0)
+				assert(magic < (1 << MAGIC_BITS))
+				be.bits(1, 1)
+				be.bits(magic, MAGIC_BITS)
+			else:
+				be.bits(0, 1)
+
 	def processBuiltins(self):
 		# finalize built-in data
 		# FIXME: built-in data would actually need to be regenerated for each
 		# byte order / profile variant, fix later
 
-		def delValue(obj, name):
-			for i,v in enumerate(obj['values']):
-				if v.has_key('name') and v['name'] == name:
-					obj['values'].pop(i)
-					return
-
-		delValue(bi_duk, 'version')
-		delValue(bi_duk, 'build')
 		build_new = self.build_info['build'] + '; ' + self.byte_order
+		bi_duk = self.findBuiltIn('bi_duk')['info']
 		bi_duk['values'].insert(0, { 'name': 'version', 'value': int(build_info['version']), 'attributes': '' })
 		bi_duk['values'].insert(1, { 'name': 'build', 'value': build_new, 'attributes': '' })
 
@@ -1577,41 +1662,50 @@ class GenBuiltins:
 		self.gs = genstrings.GenStrings()
 		self.gs.processStrings()
 
-		# hack workaround for counts
-		count_builtins[0] = 0
-		count_normal_props[0] = 0
-		count_function_props[0] = 0
+		# init indexes etc
+		self.initBuiltinIndex()
+		for bi in self.builtins:
+			self.getNativeFuncs(bi['info'])
+		self.numberNativeFuncs()
 
-		# generate builtin binary data
-		self.init_data = generate_builtin_init_data(self, self.gs)
+		# First, emit the control data required for creating correct
+		# objects.  Then emit object properties.
 
-		# FIXME: incorrect now
+		be = dukutil.BitEncoder()
+		for bi in self.builtins:
+			self.generateCreationDataForBuiltin(be, bi['info'])
+
+		for bi in self.builtins:
+			self.generatePropertiesDataForBuiltin(be, bi['info'])
+
+		self.init_data = be.getByteString()
+
 		print '%d bytes of built-in init data, %d built-in objects, %d normal props, %d func props' % \
-			(len(self.init_data), count_builtins[0], count_normal_props[0], count_function_props[0])
+			(len(self.init_data), self.count_builtins, self.count_normal_props, self.count_function_props)
 
 	def emitSource(self, genc):
 		self.gs.emitStringsData(genc)
 
 		genc.emitLine('')
-		write_native_func_array(genc)
+		self.writeNativeFuncArray(genc)
 		genc.emitLine('')
-		genc.emitArray(self.init_data, 'duk_builtins_data')
+		genc.emitArray(self.init_data, 'duk_builtins_data', typename='duk_uint8_t', intvalues=True, const=True)
 
 	def emitHeader(self, genc):
 		self.gs.emitStringsHeader(genc)
 
 		genc.emitLine('')
-		genc.emitLine('extern duk_c_function duk_builtin_native_functions[];')
+		genc.emitLine('extern const duk_c_function duk_builtin_native_functions[];')
 		genc.emitLine('')
-		genc.emitLine('extern char duk_builtins_data[];')
+		genc.emitLine('extern const duk_uint8_t duk_builtins_data[];')
 		genc.emitLine('')
 		genc.emitDefine('DUK_BUILTINS_DATA_LENGTH', len(self.init_data))
 		genc.emitLine('')
-		for idx,t in enumerate(builtins):
-			def_name1, def_name2 = generate_define_names(t['id'])
+		for idx,t in enumerate(self.builtins):
+			def_name1, def_name2 = self.generateDefineNames(t['id'])
 			genc.emitDefine(def_name1, idx)
 		genc.emitLine('')
-		genc.emitDefine('DUK_NUM_BUILTINS', len(builtins))
+		genc.emitDefine('DUK_NUM_BUILTINS', len(self.builtins))
 		genc.emitLine('')
 
 #

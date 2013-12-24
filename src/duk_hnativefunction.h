@@ -5,27 +5,26 @@
 #ifndef DUK_HNATIVEFUNCTION_H_INCLUDED
 #define DUK_HNATIVEFUNCTION_H_INCLUDED
 
-#define  DUK_HNATIVEFUNCTION_NARGS_VARARGS  ((duk_i16) -1)
-#define  DUK_HNATIVEFUNCTION_NARGS_MAX      ((duk_i16) 0x7fff)
+#define DUK_HNATIVEFUNCTION_NARGS_VARARGS  ((duk_int16_t) -1)
+#define DUK_HNATIVEFUNCTION_NARGS_MAX      ((duk_int16_t) 0x7fff)
 
 struct duk_hnativefunction {
 	/* shared object part */
 	duk_hobject obj;
 
 	duk_c_function func;
-	duk_i16 nargs;
+	duk_int16_t nargs;
+	duk_int16_t magic;
 
-	/* XXX: there is a nice 16-bit space here.  What to put here?
+	/* The 'magic' field allows an opaque 16-bit field to be accessed by the
+	 * Duktape/C function.  This allows, for instance, the same native function
+	 * to be used for a set of very similar functions, with the 'magic' field
+	 * providing the necessary non-argument flags / values to guide the behavior
+	 * of the native function.  The value is signed on purpose: it is easier to
+	 * convert a signed value to unsigned (simply AND with 0xffff) than vice
+	 * versa.
 	 *
-	 * One alternative: put a 16-bit 'magic' (or 'salt') here, and allow
-	 * C code to get the 'magic' value of their wrapping duk_hnativefunction.
-	 * This would allow the same C functions to be used internally, while
-	 * flags and small parameter fields could be given through the 'magic'
-	 * value.  For instance, there are a bunch of setter/getter functions
-	 * in the Date built-in which only differ in a few flags.
-	 */
-
-	/* Note: cannot place nargs/magic into the heaphdr flags, because
+	 * Note: cannot place nargs/magic into the heaphdr flags, because
 	 * duk_hobject takes almost all flags already (and needs the spare).
 	 */
 };

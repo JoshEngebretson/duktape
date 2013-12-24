@@ -90,7 +90,7 @@ class GenerateC:
 		self.emitLine(' */')
 		self.emitLine('')
 
-	def emitArray(self, data, tablename, typename='char', bytesize=None):
+	def emitArray(self, data, tablename, typename='char', bytesize=None, intvalues=False, const=True):
 		"Emit an array as a C array."
 
 		# lenient input
@@ -105,11 +105,17 @@ class GenerateC:
 		size_spec = ''
 		if bytesize is not None:
 			size_spec = '%d' % bytesize 
-		self.emitLine('%s %s[%s] = {' % (typename, tablename, size_spec))
+		const_qual = ''
+		if const:
+			const_qual = 'const '
+		self.emitLine('%s%s %s[%s] = {' % (const_qual, typename, tablename, size_spec))
 
 		line = ''
 		for i in xrange(len(data)):
-			t = "(%s)'\\x%02x', " % (typename, data[i])
+			if intvalues:
+				t = "%d," % data[i]
+			else:
+				t = "(%s)'\\x%02x', " % (typename, data[i])
 			if len(line) + len(t) >= self.wrap_col:
 				self.emitLine(line)
 				line = t
@@ -124,9 +130,9 @@ class GenerateC:
 
 		# XXX: there is no escaping right now (for comment or value)
 		if comment is not None:
-			self.emitLine('#define  %-60s  %-30s /* %s */' % (name, value, comment))
+			self.emitLine('#define %-60s  %-30s /* %s */' % (name, value, comment))
 		else:
-			self.emitLine('#define  %-60s  %s' % (name, value))
+			self.emitLine('#define %-60s  %s' % (name, value))
 
 	def getString(self):
 		"Get the entire file as a string."

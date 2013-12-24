@@ -16,11 +16,12 @@
 #ifdef DUK_USE_AUGMENT_ERRORS
 
 #ifdef DUK_USE_TRACEBACKS
-static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobject *obj, int err_index, const char *filename, int line) {
+static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobject *obj, int err_index, const char *filename, int line, int noblame_fileline) {
 	duk_context *ctx = (duk_context *) thr;
 	int depth;
 	int i, i_min;
 	int arr_idx;
+	double d;
 
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(thr_callstack != NULL);
@@ -42,13 +43,17 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 	arr_idx = 0;
 
 	/* filename/line from C macros (__FILE__, __LINE__) are added as an
-	 * entry with a special format: (string, number)
+	 * entry with a special format: (string, number).  The number contains
+	 * the line and flags.
 	 */
 	if (filename) {
 		duk_push_string(ctx, filename);
 		duk_put_prop_index(ctx, -2, arr_idx);
 		arr_idx++;
-		duk_push_int(ctx, line);
+
+		d = (noblame_fileline ? ((double) DUK_TB_FLAG_NOBLAME_FILELINE) * DUK_DOUBLE_2TO32 : 0.0) +
+		    (double) line;
+		duk_push_number(ctx, d);
 		duk_put_prop_index(ctx, -2, arr_idx);
 		arr_idx++;
 	}
@@ -56,12 +61,11 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 	/* traceback depth doesn't take into account the filename/line
 	 * special handling above (intentional)
 	 */
-	depth = DUK_OPT_TRACEBACK_DEPTH;
+	depth = DUK_USE_TRACEBACK_DEPTH;
 	i_min = (thr_callstack->callstack_top > depth ? thr_callstack->callstack_top - depth : 0);
 	DUK_ASSERT(i_min >= 0);
 
 	for (i = thr_callstack->callstack_top - 1; i >= i_min; i--) {
-		double d;
 		int pc;
 
 		/*
@@ -83,13 +87,16 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
 		arr_idx++;
 
 		/* add a number containing: pc, activation flags */
+
+		/* Add a number containing: pc, activation flag
+		 *
+		 * PC points to next instruction, find offending PC.  Note that
+		 * PC == 0 for native code.
+		 */
 		pc = thr_callstack->callstack[i].pc;
-#if 0
-		/* FIXME: this is not the case always now */
-		pc--;  /* PC points to next instruction, find offending PC; note that
-		        * PC == 0 should never be possible for an error.
-		        */
-#endif
+		if (pc > 0) {
+			pc--;
+		}
 		DUK_ASSERT(pc >= 0 && (double) pc < DUK_DOUBLE_2TO32);  /* assume PC is at most 32 bits and non-negative */
 		d = ((double) thr_callstack->callstack[i].flags) * DUK_DOUBLE_2TO32 + (double) pc;
 		duk_push_number(ctx, d);  /* -> [... arr num] */
@@ -107,9 +114,18 @@ static void add_traceback(duk_hthread *thr, duk_hthread *thr_callstack, duk_hobj
  *
  *  thr: thread containing the error value
  *  thr_callstack: thread which should be used for generating callstack etc.
+ *  err_index: index of error object to augment
+ *  filename: C __FILE__ related to the error
+ *  line: C __LINE__ related to the error
+ *  noblame_fileline: if true, don't fileName/line as error source, otherwise use traceback
+ *                    (needed because user code filename/line are reported but internal ones
+ *                    are not)
+ *
+ *  FIXME: rename noblame_fileline to flags field; combine it to some existing
+ *  field (there are only a few call sites so this may not be worth it).
  */
 
-void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err_index, const char *filename, int line) {
+void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err_index, const char *filename, int line, int noblame_fileline) {
 	duk_context *ctx = (duk_context *) thr;
 	duk_hobject *obj;
 
@@ -154,7 +170,7 @@ void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err
 	if (duk_hobject_hasprop_raw(thr, obj, DUK_HTHREAD_STRING_TRACEDATA(thr))) {
 		DUK_DDDPRINT("error value already has a 'traceback' property, not modifying it");
 	} else {
-		add_traceback(thr, thr_callstack, obj, err_index, filename, line);
+		add_traceback(thr, thr_callstack, obj, err_index, filename, line, noblame_fileline);
 	}
 #else
 	/*
@@ -165,10 +181,9 @@ void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err
 	 *  overwritten in case they already exist.
 	 */
 
-	if (filename) {
-		/* XXX: __FILE__/__LINE__ may not always be the most relevant,
-		 * see comments in traceback formatting.  Further these are
-		 * not currently set in minimal builds anyway, so disable?
+	if (filename && !noblame_fileline) {
+		/* FIXME: file/line is disabled in minimal builds, so disable this too
+		 * when appropriate.
 		 */
 		duk_push_string(ctx, filename);
 		duk_def_prop_stridx(ctx, err_index, DUK_STRIDX_FILE_NAME, DUK_PROPDESC_FLAGS_WC | DUK_PROPDESC_FLAG_NO_OVERWRITE);
@@ -184,15 +199,15 @@ void duk_err_augment_error(duk_hthread *thr, duk_hthread *thr_callstack, int err
 		func = act->func;
 		if (func) {
 			int pc;
-			duk_u32 line;
+			duk_uint32_t line;
 
+			/* PC points to next instruction, find offending PC.  Note that
+			 * PC == 0 for native code.
+			 */
 			pc = act->pc;
-#if 0
-			/* FIXME: this is not the case always now */
-			pc--;  /* PC points to next instruction, find offending PC; note that
-			        * PC == 0 should never be possible for an error.
-			        */
-#endif
+			if (pc > 0) {
+				pc--;
+			}
 			DUK_ASSERT(pc >= 0 && (double) pc < DUK_DOUBLE_2TO32);  /* assume PC is at most 32 bits and non-negative */
 			act = NULL;  /* invalidated by pushes, so get out of the way */
 

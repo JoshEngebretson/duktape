@@ -10,14 +10,16 @@
 
 /*
  *  Platform specific handling: detection of features, system headers are
- *  included etc.  Duktape.h contains its own feature detection which must
- *  match duk_features.h, so duk_features_sanity.h is included to check for
- *  consistency.
+ *  included etc.  Duktape.h contains its own feature detection for those
+ *  features the external API absolutely needs.  Duktape.h detection results
+ *  must match duk_features.h, so duk_features_sanity.h is included to check
+ *  for consistency.
  */
 
 #include "duk_features.h"
 #include "duktape.h"
 #include "duk_features_sanity.h"
+#include "duk_dblunion.h"
 
 /*
  *  Duktape includes (other than duk_features.h)
@@ -55,6 +57,7 @@
 #include "duk_js.h"
 #include "duk_numconv.h"
 #include "duk_builtin_protos.h"
+#include "duk_selftest.h"
 
 #endif  /* DUK_INTERNAL_H_INCLUDED */
 

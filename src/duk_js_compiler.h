@@ -5,11 +5,15 @@
 #ifndef DUK_JS_COMPILER_H_INCLUDED
 #define DUK_JS_COMPILER_H_INCLUDED
 
-/* regexp compilation limits */
-#define  DUK_COMPILER_RECURSION_LIMIT       50
+/* ecmascript compiler limits */
+#if defined(DUK_USE_DEEP_C_STACK)
+#define DUK_COMPILER_RECURSION_LIMIT       2500
+#else
+#define DUK_COMPILER_RECURSION_LIMIT       50
+#endif
 
 /* maximum loopcount for peephole optimization */
-#define  DUK_COMPILER_PEEPHOLE_MAXITER      3
+#define DUK_COMPILER_PEEPHOLE_MAXITER      3
 
 /*
  *  Compiler intermediate values
@@ -19,18 +23,18 @@
  *  either a left-hand-side or right-hand-side role (e.g. object property).
  */
 
-#define  DUK_IVAL_NONE          0   /* no value */
-#define  DUK_IVAL_PLAIN         1   /* register, constant, or value */
-#define  DUK_IVAL_ARITH         2   /* binary arithmetic; DUK_OP_ADD, DUK_OP_EQ, other binary ops */
-#define  DUK_IVAL_PROP          3   /* property access */
-#define  DUK_IVAL_VAR           4   /* variable access */
+#define DUK_IVAL_NONE          0   /* no value */
+#define DUK_IVAL_PLAIN         1   /* register, constant, or value */
+#define DUK_IVAL_ARITH         2   /* binary arithmetic; DUK_OP_ADD, DUK_OP_EQ, other binary ops */
+#define DUK_IVAL_PROP          3   /* property access */
+#define DUK_IVAL_VAR           4   /* variable access */
 
-#define  DUK_ISPEC_NONE         0   /* no value */
-#define  DUK_ISPEC_VALUE        1   /* value resides in 'valstack_idx' */
-#define  DUK_ISPEC_REGCONST     2   /* value resides in a register or constant */
+#define DUK_ISPEC_NONE         0   /* no value */
+#define DUK_ISPEC_VALUE        1   /* value resides in 'valstack_idx' */
+#define DUK_ISPEC_REGCONST     2   /* value resides in a register or constant */
 
 /* bit mask which indicates that a regconst is a constant instead of a register */
-#define  DUK_JS_CONST_MARKER    0x80000000
+#define DUK_JS_CONST_MARKER    0x80000000
 
 typedef struct {
 	int t;                      /* DUK_ISPEC_XXX */
@@ -61,7 +65,7 @@ typedef struct {
 struct duk_compiler_instr {
 	duk_instr ins;
 #if 1  /* FIXME: line number tracking now always enabled, make optional */
-	duk_u32 line;
+	duk_uint32_t line;
 #endif
 };
 
@@ -69,14 +73,14 @@ struct duk_compiler_instr {
  *  Compiler state
  */
 
-#define  MAX_MAPPED_REGS                  128  /* max regs mapped to arguments and variables */
-#define  MAX_ACTIVE_LABELS                64
+#define MAX_MAPPED_REGS                  128  /* max regs mapped to arguments and variables */
+#define MAX_ACTIVE_LABELS                64
 
-#define  DUK_LABEL_FLAG_ALLOW_BREAK       (1 << 0)
-#define  DUK_LABEL_FLAG_ALLOW_CONTINUE    (1 << 1)
+#define DUK_LABEL_FLAG_ALLOW_BREAK       (1 << 0)
+#define DUK_LABEL_FLAG_ALLOW_CONTINUE    (1 << 1)
 
-#define  DUK_DECL_TYPE_VAR                1
-#define  DUK_DECL_TYPE_FUNC               2
+#define DUK_DECL_TYPE_VAR                1
+#define DUK_DECL_TYPE_FUNC               2
 
 /* FIXME: optimize to 16 bytes */
 typedef struct {
@@ -110,6 +114,7 @@ struct duk_compiler_func {
 	int id_access_arguments;            /* function refers to 'arguments' identifier */
 	int id_access_slow;                 /* function makes one or more slow path accesses */
 	int is_arguments_shadowed;          /* argument/function declaration shadows 'arguments' */
+	int needs_shuffle;                  /* function needs shuffle registers */
 	int num_formals;                    /* number of formal arguments */
 	int reg_stmt_value;                 /* register for writing value of 'non-empty' statements (global or eval code) */
 
@@ -150,6 +155,11 @@ struct duk_compiler_func {
 	int temp_first;                     /* first register that is a temporary (below: variables) */
 	int temp_next;                      /* next temporary register to allocate */
 	int temp_max;                       /* highest value of temp_reg (temp_max - 1 is highest used reg) */
+
+	/* shuffle registers if large number of regs/consts */
+	int shuffle1;
+	int shuffle2;
+	int shuffle3;
 
 	/* statement id allocation (running counter) */
 	int stmt_next;
@@ -200,9 +210,9 @@ struct duk_compiler_ctx {
  *  Prototypes
  */
 
-#define  DUK_JS_COMPILE_FLAG_EVAL      (1 << 0)  /* source is eval code (not program) */
-#define  DUK_JS_COMPILE_FLAG_STRICT    (1 << 1)  /* strict outer context */
-#define  DUK_JS_COMPILE_FLAG_FUNCEXPR  (1 << 2)  /* source is a function expression (used for Function constructor) */
+#define DUK_JS_COMPILE_FLAG_EVAL      (1 << 0)  /* source is eval code (not program) */
+#define DUK_JS_COMPILE_FLAG_STRICT    (1 << 1)  /* strict outer context */
+#define DUK_JS_COMPILE_FLAG_FUNCEXPR  (1 << 2)  /* source is a function expression (used for Function constructor) */
 
 void duk_js_compile(duk_hthread *thr, int flags);
 

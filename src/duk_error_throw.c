@@ -95,9 +95,9 @@ static void call_errhandler(duk_hthread *thr) {
  */
 
 #ifdef DUK_USE_VERBOSE_ERRORS
-void duk_err_create_and_throw(duk_hthread *thr, duk_u32 code, const char *msg, const char *filename, int line) {
+void duk_err_create_and_throw(duk_hthread *thr, duk_uint32_t code, const char *msg, const char *filename, int line) {
 #else
-void duk_err_create_and_throw(duk_hthread *thr, duk_u32 code) {
+void duk_err_create_and_throw(duk_hthread *thr, duk_uint32_t code) {
 #endif
 	duk_context *ctx = (duk_context *) thr;
 	int double_error = thr->heap->handling_error;
@@ -139,9 +139,18 @@ void duk_err_create_and_throw(duk_hthread *thr, duk_u32 code) {
 		duk_require_stack(ctx, 1);
 		/* FIXME: unnecessary '%s' formatting here */
 #ifdef DUK_USE_VERBOSE_ERRORS
-		duk_push_error_object_raw(ctx, code, filename, line, "%s", msg);
+		duk_push_error_object_raw(ctx,
+		                          code | DUK_ERRCODE_FLAG_NOBLAME_FILELINE,
+		                          filename,
+		                          line,
+		                          "%s",
+		                          msg);
 #else
-		duk_push_error_object_raw(ctx, code, NULL, 0, NULL);
+		duk_push_error_object_raw(ctx,
+		                          code | DUK_ERRCODE_FLAG_NOBLAME_FILELINE,
+		                          NULL,
+		                          0,
+		                          NULL);
 #endif
 	}
 
@@ -170,7 +179,7 @@ void duk_err_create_and_throw(duk_hthread *thr, duk_u32 code) {
 	             &thr->heap->lj.value1, &thr->heap->lj.value2);
 
 	duk_err_longjmp(thr);
-	DUK_NEVER_HERE();
+	DUK_UNREACHABLE();
 }
 
 /*
@@ -218,6 +227,6 @@ void duk_error_throw_from_negative_rc(duk_hthread *thr, int rc) {
 	 *  code, and having the file/line of this function isn't very useful.
 	 */
 
-	duk_error_raw(ctx, code, NULL, 0, "%s (rc %d)", msg, rc);
-	DUK_NEVER_HERE();
+	duk_error_raw(ctx, code, NULL, 0, "%s (rc %d)", (msg ? msg : "null"), rc);
+	DUK_UNREACHABLE();
 }

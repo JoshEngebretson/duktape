@@ -4,10 +4,18 @@
 
 #include "duk_internal.h"
 
-static int duk_error_constructor_helper(duk_context *ctx, int bidx_prototype) {
+int duk_builtin_error_constructor_shared(duk_context *ctx) {
 	/* Behavior for constructor and non-constructor call is
-	 * exactly the same.
+	 * the same except for augmenting the created error.  When
+	 * called as a constructor, the caller (duk_new()) will handle
+	 * augmentation; when called as normal function, we need to do
+	 * it here.
 	 */
+
+	duk_hthread *thr = (duk_hthread *) ctx;
+	int bidx_prototype = duk_get_magic(ctx);
+
+	DUK_UNREF(thr);
 
 	/* same for both error and each subclass like TypeError */
 	int flags_and_class = DUK_HOBJECT_FLAG_EXTENSIBLE |
@@ -15,41 +23,26 @@ static int duk_error_constructor_helper(duk_context *ctx, int bidx_prototype) {
 	
 	duk_push_object_helper(ctx, flags_and_class, bidx_prototype);
 
+	/* If message is undefined, the own property 'message' is not set at
+	 * all to save property space.  An empty message is inherited anyway.
+	 */
 	if (!duk_is_undefined(ctx, 0)) {
 		duk_to_string(ctx, 0);
 		duk_dup(ctx, 0);  /* [ message error message ] */
 		duk_def_prop_stridx(ctx, -2, DUK_STRIDX_MESSAGE, DUK_PROPDESC_FLAGS_WC);
 	}
 
+	/* Augment the error if called as a normal function.  __FILE__ and __LINE__
+	 * are not desirable in this case.
+	 */
+
+#ifdef DUK_USE_AUGMENT_ERRORS
+	if (!duk_is_constructor_call(ctx)) {
+		duk_err_augment_error(thr, thr, -1, NULL, 0, 1 /*noblame_fileline*/);
+	}
+#endif
+
 	return 1;
-}
-
-int duk_builtin_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_ERROR_PROTOTYPE);
-}
-
-int duk_builtin_eval_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_EVAL_ERROR_PROTOTYPE);
-}
-
-int duk_builtin_range_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_RANGE_ERROR_PROTOTYPE);
-}
-
-int duk_builtin_reference_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_REFERENCE_ERROR_PROTOTYPE);
-}
-
-int duk_builtin_syntax_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_SYNTAX_ERROR_PROTOTYPE);
-}
-
-int duk_builtin_type_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_TYPE_ERROR_PROTOTYPE);
-}
-
-int duk_builtin_uri_error_constructor(duk_context *ctx) {
-	return duk_error_constructor_helper(ctx, DUK_BIDX_URI_ERROR_PROTOTYPE);
 }
 
 int duk_builtin_error_prototype_to_string(duk_context *ctx) {
@@ -117,9 +110,9 @@ int duk_builtin_error_prototype_to_string(duk_context *ctx) {
  */
 
 /* constants arbitrary, chosen for small loads */
-#define  DUK__OUTPUT_TYPE_TRACEBACK   -1
-#define  DUK__OUTPUT_TYPE_FILENAME    0
-#define  DUK__OUTPUT_TYPE_LINENUMBER  1
+#define DUK__OUTPUT_TYPE_TRACEBACK   (-1)
+#define DUK__OUTPUT_TYPE_FILENAME    0
+#define DUK__OUTPUT_TYPE_LINENUMBER  1
 
 static int traceback_getter_helper(duk_context *ctx, int output_type) {
 	duk_hthread *thr = (duk_hthread *) ctx;
@@ -229,27 +222,24 @@ static int traceback_getter_helper(duk_context *ctx, int output_type) {
 			} else if (t == DUK_TYPE_STRING) {
 				/*
 				 *  __FILE__ / __LINE__ entry, here 'pc' is line number directly.
-				 *
-				 *  FIXME: add a flag to indicate whether the __FILE__ / __LINE__
-				 *  should be returned as the error's fileName / lineNumber?  If
-				 *  __FILE__ / __LINE__ is recorded from the Duktape API return
-				 *  it as fileName / lineNumber.  If recorded from inside Duktape,
-				 *  ignore it as the fileName / lineNumber (except perhaps when it
-				 *  is the last traceback entry)?
+				 *  Sometimes __FILE__ / __LINE__ is reported as the source for
+				 *  the error (fileName, lineNumber), sometimes not.
 				 */
 
 				/* [ ... v1(filename) v2(line+flags) ] */
 
-				if (output_type == DUK__OUTPUT_TYPE_FILENAME) {
-					duk_pop(ctx);
-					return 1;
-				} else if (output_type == DUK__OUTPUT_TYPE_LINENUMBER) {
-					duk_push_int(ctx, pc);
-					return 1;
+				if (!(flags & DUK_TB_FLAG_NOBLAME_FILELINE)) {
+					if (output_type == DUK__OUTPUT_TYPE_FILENAME) {
+						duk_pop(ctx);
+						return 1;
+					} else if (output_type == DUK__OUTPUT_TYPE_LINENUMBER) {
+						duk_push_int(ctx, pc);
+						return 1;
+					}
 				}
 
 				duk_push_sprintf(ctx, "%s:%d",
-				                      duk_get_string(ctx, -2), pc);
+				                 duk_get_string(ctx, -2), pc);
 				duk_replace(ctx, -3);  /* [ ... v1 v2 str ] -> [ ... str v2 ] */
 				duk_pop(ctx);          /* -> [ ... str ] */
 			} else {
@@ -259,7 +249,7 @@ static int traceback_getter_helper(duk_context *ctx, int output_type) {
 			}
 		}
 
-		if (i >= DUK_OPT_TRACEBACK_DEPTH * 2) {
+		if (i >= DUK_USE_TRACEBACK_DEPTH * 2) {
 			/* Possibly truncated; there is no explicit truncation
 			 * marker so this is the best we can do.
 			 */
@@ -294,9 +284,9 @@ int duk_builtin_error_prototype_linenumber_getter(duk_context *ctx) {
 	return traceback_getter_helper(ctx, DUK__OUTPUT_TYPE_LINENUMBER);
 }
 
-#undef  DUK__OUTPUT_TYPE_TRACEBACK
-#undef  DUK__OUTPUT_TYPE_FILENAME
-#undef  DUK__OUTPUT_TYPE_LINENUMBER
+#undef DUK__OUTPUT_TYPE_TRACEBACK
+#undef DUK__OUTPUT_TYPE_FILENAME
+#undef DUK__OUTPUT_TYPE_LINENUMBER
 
 #else  /* DUK_USE_TRACEBACKS */
 

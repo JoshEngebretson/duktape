@@ -61,19 +61,19 @@
 /* list of conversion specifiers that terminate a format tag;
  * this is unfortunately guesswork.
  */
-#define  ALLOWED_STANDARD_CONVERSION_SPECIFIERS  "diouxXeEfFgGaAcsCSpnm"
+#define ALLOWED_STANDARD_CONVERSION_SPECIFIERS  "diouxXeEfFgGaAcsCSpnm"
 
 /* maximum length of standard format tag that we support */
-#define  MAX_FORMAT_TAG_LENGTH  32
+#define MAX_FORMAT_TAG_LENGTH  32
 
 /* heapobj recursion depth when deep printing is selected */
-#define  DEEP_DEPTH_LIMIT  8
+#define DEEP_DEPTH_LIMIT  8
 
 /* maximum recursion depth for loop detection stacks */
-#define  LOOP_STACK_DEPTH  256
+#define LOOP_STACK_DEPTH  256
 
 /* must match bytecode defines now; build autogenerate? */
-static char *bc_optab[] = {
+static const char *bc_optab[] = {
 	"LDREG", "STREG", "LDCONST", "LDINT", "LDINTX", "MPUTOBJ", "MPUTARR", "NEW", "REGEXP", "CSREG",
 	"GETVAR", "PUTVAR", "DECLVAR", "DELVAR", "CSVAR", "CLOSURE", "GETPROP", "PUTPROP", "DELPROP", "CSPROP",
 	"ADD", "SUB", "MUL", "DIV", "MOD", "UNM", "UNP", "INC", "DEC", "BAND",
@@ -84,7 +84,7 @@ static char *bc_optab[] = {
 	"OP60", "EXTRA", "DEBUG", "INVALID",
 };
 
-static char *bc_extraoptab[] = {
+static const char *bc_extraoptab[] = {
 	"NOP", "LDTHIS", "LDUNDEF", "LDNULL", "LDTRUE", "LDFALSE", "NEWOBJ", "NEWARR", "SETALEN", "TYPEOF",
 	"TYPEOFID", "TONUM", "INITENUM", "NEXTENUM", "INITSET", "INITGET", "ENDTRY", "ENDCATCH", "ENDFIN", "THROW",
 	"INVLHS", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX", "XXX",
@@ -163,11 +163,11 @@ static void print_shared_heaphdr(duk_dprint_state *st, duk_heaphdr *h) {
 
 	if (st->binary) {
 		int i;
-		duk_fb_put_byte(fb, (duk_u8) '[');
+		duk_fb_put_byte(fb, (duk_uint8_t) '[');
 		for (i = 0; i < sizeof(*h); i++) {
 			duk_fb_sprintf(fb, "%02x", (int) ((unsigned char *)h)[i]);
 		}
-		duk_fb_put_byte(fb, (duk_u8) ']');
+		duk_fb_put_byte(fb, (duk_uint8_t) ']');
 	}
 
 #ifdef DUK_USE_REFERENCE_COUNTING  /* currently implicitly also DUK_USE_DOUBLE_LINKED_HEAP */
@@ -210,11 +210,11 @@ static void print_shared_heaphdr_string(duk_dprint_state *st, duk_heaphdr_string
 
 	if (st->binary) {
 		int i;
-		duk_fb_put_byte(fb, (duk_u8) '[');
+		duk_fb_put_byte(fb, (duk_uint8_t) '[');
 		for (i = 0; i < sizeof(*h); i++) {
 			duk_fb_sprintf(fb, "%02x", (int) ((unsigned char *)h)[i]);
 		}
-		duk_fb_put_byte(fb, (duk_u8) ']');
+		duk_fb_put_byte(fb, (duk_uint8_t) ']');
 	}
 
 #ifdef DUK_USE_REFERENCE_COUNTING
@@ -243,8 +243,8 @@ static void print_shared_heaphdr_string(duk_dprint_state *st, duk_heaphdr_string
 
 static void print_hstring(duk_dprint_state *st, duk_hstring *h, int quotes) {
 	duk_fixedbuffer *fb = st->fb;
-	duk_u8 *p;
-	duk_u8 *p_end;
+	duk_uint8_t *p;
+	duk_uint8_t *p_end;
 
 	/* terminal type: no depth check */
 
@@ -271,10 +271,10 @@ static void print_hstring(duk_dprint_state *st, duk_hstring *h, int quotes) {
 	}
 
 	if (quotes) {
-		duk_fb_put_byte(fb, (duk_u8) '"');
+		duk_fb_put_byte(fb, (duk_uint8_t) '"');
 	}
 	while (p < p_end) {
-		duk_u8 ch = *p++;
+		duk_uint8_t ch = *p++;
 
 		/* two special escapes: '\' and '"', other printables as is */
 		if (ch == '\\') {
@@ -287,13 +287,13 @@ static void print_hstring(duk_dprint_state *st, duk_hstring *h, int quotes) {
 			/* encode \xffbar as _bar if no quotes are applied, this is for
 			 * readable internal keys.
 			 */
-			duk_fb_put_byte(fb, (duk_u8) '_');
+			duk_fb_put_byte(fb, (duk_uint8_t) '_');
 		} else {
 			duk_fb_sprintf(fb, "\\x%02x", (int) ch);
 		}
 	}
 	if (quotes) {
-		duk_fb_put_byte(fb, (duk_u8) '"');
+		duk_fb_put_byte(fb, (duk_uint8_t) '"');
 	}
 #ifdef DUK_USE_REFERENCE_COUNTING
 	/* XXX: limit to quoted strings only, to save keys from being cluttered? */
@@ -304,11 +304,11 @@ static void print_hstring(duk_dprint_state *st, duk_hstring *h, int quotes) {
 #ifdef _COMMA
 #undef _COMMA
 #endif
-#define  _COMMA()  do { \
+#define _COMMA()  do { \
 		if (first) { \
 			first = 0; \
 		} else { \
-			duk_fb_put_byte(fb, (duk_u8) ','); \
+			duk_fb_put_byte(fb, (duk_uint8_t) ','); \
 		} \
 	} while (0)
 
@@ -413,7 +413,7 @@ static void print_hobject(duk_dprint_state *st, duk_hobject *h) {
 			}
 			_COMMA();
 			print_hstring(st, key, 0);
-			duk_fb_put_byte(fb, (duk_u8) ':');
+			duk_fb_put_byte(fb, (duk_uint8_t) ':');
 			if (DUK_HOBJECT_E_SLOT_IS_ACCESSOR(h, i)) {
 				duk_fb_sprintf(fb, "[get:%p,set:%p]",
 				               DUK_HOBJECT_E_GET_VALUE(h, i).a.get,
@@ -553,11 +553,11 @@ static void print_hobject(duk_dprint_state *st, duk_hobject *h) {
 	duk_fb_put_cstring(fb, brace2);
 
 	if (st->heavy && h->h_size > 0) {
-		duk_fb_put_byte(fb, (duk_u8) '<');
+		duk_fb_put_byte(fb, (duk_uint8_t) '<');
 		for (i = 0; i < h->h_size; i++) {
-			duk_i32 h_idx = DUK_HOBJECT_H_GET_INDEX(h, i);
+			duk_uint32_t h_idx = DUK_HOBJECT_H_GET_INDEX(h, i);
 			if (i > 0) {
-				duk_fb_put_byte(fb, (duk_u8) ',');
+				duk_fb_put_byte(fb, (duk_uint8_t) ',');
 			}
 			if (h_idx == DUK_HOBJECT_HASHIDX_UNUSED) {
 				duk_fb_sprintf(fb, "u");
@@ -567,7 +567,7 @@ static void print_hobject(duk_dprint_state *st, duk_hobject *h) {
 				duk_fb_sprintf(fb, "%d", (int) h_idx);
 			}
 		}
-		duk_fb_put_byte(fb, (duk_u8) '>');
+		duk_fb_put_byte(fb, (duk_uint8_t) '>');
 	}
 
  finished:
@@ -583,7 +583,7 @@ static void print_hobject(duk_dprint_state *st, duk_hobject *h) {
 static void print_hbuffer(duk_dprint_state *st, duk_hbuffer *h) {
 	duk_fixedbuffer *fb = st->fb;
 	size_t i, n;
-	duk_u8 *p;
+	duk_uint8_t *p;
 
 	if (duk_fb_is_full(fb)) {
 		return;
@@ -611,7 +611,7 @@ static void print_hbuffer(duk_dprint_state *st, duk_hbuffer *h) {
 	if (st->hexdump) {
 		duk_fb_sprintf(fb, "=[");
 		n = DUK_HBUFFER_GET_SIZE(h);
-		p = (duk_u8 *) DUK_HBUFFER_GET_DATA_PTR(h);
+		p = (duk_uint8_t *) DUK_HBUFFER_GET_DATA_PTR(h);
 		for (i = 0; i < n; i++) {
 			duk_fb_sprintf(fb, "%02x", (int) p[i]);
 		}
@@ -667,15 +667,15 @@ static void print_tval(duk_dprint_state *st, duk_tval *tv) {
 
 	if (st->binary) {
 		int i;
-		duk_fb_put_byte(fb, (duk_u8) '[');
+		duk_fb_put_byte(fb, (duk_uint8_t) '[');
 		for (i = 0; i < sizeof(*tv); i++) {
 			duk_fb_sprintf(fb, "%02x", (int) ((unsigned char *)tv)[i]);
 		}
-		duk_fb_put_byte(fb, (duk_u8) ']');
+		duk_fb_put_byte(fb, (duk_uint8_t) ']');
 	}
 
 	if (st->heavy) {
-		duk_fb_put_byte(fb, (duk_u8) '<');
+		duk_fb_put_byte(fb, (duk_uint8_t) '<');
 	}
 	switch (DUK_TVAL_GET_TAG(tv)) {
 	case DUK_TAG_UNDEFINED: {
@@ -719,7 +719,7 @@ static void print_tval(duk_dprint_state *st, duk_tval *tv) {
 	}
 	}
 	if (st->heavy) {
-		duk_fb_put_byte(fb, (duk_u8) '>');
+		duk_fb_put_byte(fb, (duk_uint8_t) '>');
 	}
 }
 
@@ -768,7 +768,7 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 	int retval;
 	
 	DUK_MEMSET(&fb, 0, sizeof(fb));
-	fb.buffer = (duk_u8 *) str;
+	fb.buffer = (duk_uint8_t *) str;
 	fb.length = size;
 	fb.offset = 0;
 	fb.truncated = 0;
@@ -780,7 +780,7 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 		duk_dprint_state st;
 
 		if (ch != '%') {
-			duk_fb_put_byte(&fb, (duk_u8) ch);
+			duk_fb_put_byte(&fb, (duk_uint8_t) ch);
 			continue;
 		}
 
@@ -806,7 +806,7 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 				/* unsupported: would consume multiple args */
 				goto error;
 			} else if (ch == '%') {
-				duk_fb_put_byte(&fb, (duk_u8) '%');
+				duk_fb_put_byte(&fb, (duk_uint8_t) '%');
 				break;
 			} else if (ch == '!') {
 				got_exclamation = 1;
@@ -888,7 +888,7 @@ int duk_debug_vsnprintf(char *str, size_t size, const char *format, va_list ap) 
 
  done:
 	retval = fb.offset;
-	duk_fb_put_byte(&fb, (duk_u8) 0);
+	duk_fb_put_byte(&fb, (duk_uint8_t) 0);
 
 	/* return total chars written excluding terminator */
 	return retval;
@@ -901,6 +901,35 @@ int duk_debug_snprintf(char *str, size_t size, const char *format, ...) {
 	retval = duk_debug_vsnprintf(str, size, format, ap);
 	va_end(ap);
 	return retval;
+}
+
+/* Formatting function pointers is tricky: there is no standard pointer for
+ * function pointers and the size of a function pointer may depend on the
+ * specific pointer type.  This helper formats a function pointer based on
+ * its memory layout to get something useful on most platforms.
+ */
+void duk_debug_format_funcptr(char *buf, int buf_size, unsigned char *fptr, int fptr_size) {
+	int i;
+	char *p = buf;
+	char *p_end = buf + buf_size - 1;
+
+	DUK_MEMSET(buf, 0, buf_size);
+
+	for (i = 0; i < fptr_size; i++) {
+		int left = p_end - p;
+		unsigned char ch;
+		if (left <= 0) {
+			break;
+		}
+
+		/* Quite approximate but should be useful for little and big endian. */
+#ifdef DUK_USE_BIG_ENDIAN
+		ch = fptr[i];
+#else
+		ch = fptr[fptr_size - 1 - i];
+#endif
+		p += DUK_SNPRINTF(p, left, "%02x", (int) ch);
+	}	
 }
 
 #endif  /* DUK_USE_DEBUG */

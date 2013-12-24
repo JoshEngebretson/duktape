@@ -5,11 +5,12 @@
 #include "duk_internal.h"
 
 static void concat_and_join_helper(duk_context *ctx, int count, int is_join) {
+	duk_hthread *thr = (duk_hthread *) ctx;
 	unsigned int i;
-	unsigned int len;
 	unsigned int idx;
+	size_t len;
 	duk_hstring *h;
-	duk_u8 *buf;
+	duk_uint8_t *buf;
 
 	DUK_ASSERT(ctx != NULL);
 
@@ -19,23 +20,43 @@ static void concat_and_join_helper(duk_context *ctx, int count, int is_join) {
 	}
 
 	if (is_join) {
+		size_t t1, t2, limit;
 		h = duk_to_hstring(ctx, -count-1);
 		DUK_ASSERT(h != NULL);
-		len = DUK_HSTRING_GET_BYTELEN(h) * (count - 1);
+
+		/* A bit tricky overflow test, see doc/code-issues.txt. */
+		t1 = (size_t) DUK_HSTRING_GET_BYTELEN(h);
+		t2 = (size_t) (count - 1);
+		limit = (size_t) DUK_HSTRING_MAX_BYTELEN;
+		if (DUK_UNLIKELY(t2 != 0 && t1 > limit / t2)) {
+			/* Combined size of separators already overflows */
+			goto error_overflow;
+		}
+		len = (size_t) (t1 * t2);
 	} else {
-		len = 0;
+		len = (size_t) 0;
 	}
 
 	for (i = count; i >= 1; i--) {
+		size_t new_len;
 		duk_to_string(ctx, -i);
 		h = duk_require_hstring(ctx, -i);
-		len += DUK_HSTRING_GET_BYTELEN(h);
+		new_len = len + (size_t) DUK_HSTRING_GET_BYTELEN(h);
+
+		/* Impose a string maximum length, need to handle overflow
+		 * correctly.
+		 */
+		if (new_len < len ||  /* wrapped */
+		    new_len > (size_t) DUK_HSTRING_MAX_BYTELEN) {
+			goto error_overflow;
+		}
+		len = new_len;
 	}
 
-	DUK_DDDPRINT("join/concat %d strings, total length %d bytes", count, len);
+	DUK_DDDPRINT("join/concat %d strings, total length %d bytes", (int) count, (int) len);
 
 	/* use stack allocated buffer to ensure reachability in errors (e.g. intern error) */
-	buf = (duk_u8 *) duk_push_fixed_buffer(ctx, len);
+	buf = (duk_uint8_t *) duk_push_fixed_buffer(ctx, len);
 	DUK_ASSERT(buf != NULL);
 
 	/* [... (sep) str1 str2 ... strN buf] */
@@ -68,19 +89,13 @@ static void concat_and_join_helper(duk_context *ctx, int count, int is_join) {
 
 	/* [... buf] */
 
-	/*
-	 *  FIXME: just allow C code to call duk_to_string() on buffers.
-	 *  This allows C code to manufacture internal keys, but since we
-	 *  trust C code anyway, this is not a big issue.
-	 */
-
-	duk_push_lstring(ctx, (const char *) buf, len);
-
-	/* [... buf res] */
-
-	duk_remove(ctx, -2);
+	(void) duk_to_string(ctx, -1);
 
 	/* [... res] */
+	return;
+
+ error_overflow:
+	DUK_ERROR(thr, DUK_ERR_RANGE_ERROR, "concat result too long");
 }
 
 void duk_concat(duk_context *ctx, unsigned int count) {
@@ -127,6 +142,7 @@ void duk_substring(duk_context *ctx, int index, size_t start_offset, size_t end_
 
 	DUK_ASSERT(end_byte_offset >= start_byte_offset);
 
+	/* no size check is necessary */
 	res = duk_heap_string_intern_checked(thr,
 	                                     DUK_HSTRING_GET_DATA(h) + start_byte_offset,
 	                                     end_byte_offset - start_byte_offset);
@@ -141,9 +157,9 @@ void duk_substring(duk_context *ctx, int index, size_t start_offset, size_t end_
 void duk_trim(duk_context *ctx, int index) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_hstring *h;
-	duk_u8 *p, *p_start, *p_end, *p_tmp1, *p_tmp2;  /* pointers for scanning */
-	duk_u8 *q_start, *q_end;  /* start (incl) and end (excl) of trimmed part */
-	duk_u32 cp;
+	duk_uint8_t *p, *p_start, *p_end, *p_tmp1, *p_tmp2;  /* pointers for scanning */
+	duk_uint8_t *q_start, *q_end;  /* start (incl) and end (excl) of trimmed part */
+	duk_codepoint_t cp;
 
 	index = duk_require_normalize_index(ctx, index);
 	h = duk_require_hstring(ctx, index);
@@ -155,7 +171,7 @@ void duk_trim(duk_context *ctx, int index) {
 	p = p_start;
 	while (p < p_end) {
 		p_tmp1 = p;
-		cp = duk_unicode_xutf8_get_u32_checked(thr, &p_tmp1, p_start, p_end);
+		cp = (duk_codepoint_t) duk_unicode_decode_xutf8_checked(thr, &p_tmp1, p_start, p_end);
 		if (!(duk_unicode_is_whitespace(cp) || duk_unicode_is_line_terminator(cp))) {
 			break;
 		}
@@ -179,7 +195,7 @@ void duk_trim(duk_context *ctx, int index) {
 		}
 		p_tmp2 = p;
 
-		cp = duk_unicode_xutf8_get_u32_checked(thr, &p_tmp2, p_start, p_end);
+		cp = (duk_codepoint_t) duk_unicode_decode_xutf8_checked(thr, &p_tmp2, p_start, p_end);
 		if (!(duk_unicode_is_whitespace(cp) || duk_unicode_is_line_terminator(cp))) {
 			p = p_tmp1;
 			break;

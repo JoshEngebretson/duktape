@@ -36,7 +36,7 @@ static unsigned int push_this_obj_len_u32(duk_context *ctx) {
 int duk_builtin_array_constructor(duk_context *ctx) {
 	int nargs;
 	double d;
-	duk_u32 len;
+	duk_uint32_t len;
 	int i;
 
 	nargs = duk_get_top(ctx);
@@ -184,11 +184,16 @@ int duk_builtin_array_prototype_concat(duk_context *ctx) {
  * them here.
  */
 
-static int array_join_helper(duk_context *ctx, int to_locale_string) {
-	duk_u32 len;
-	duk_u32 i;
+int duk_builtin_array_prototype_join_shared(duk_context *ctx) {
+	duk_uint32_t len;
+	duk_uint32_t i;
+	int to_locale_string = duk_get_magic(ctx);
 
-	DUK_ASSERT_TOP(ctx, 1);
+	/* For join(), nargs is 1.  For toLocaleString(), nargs is 0 and
+	 * setting the top essentially pushes an undefined to the stack,
+	 * thus defaulting to a comma separator.
+	 */
+	duk_set_top(ctx, 1);
 	if (duk_is_undefined(ctx, 0)) {
 		duk_pop(ctx);
 		duk_push_hstring_stridx(ctx, DUK_STRIDX_COMMA);
@@ -229,17 +234,6 @@ static int array_join_helper(duk_context *ctx, int to_locale_string) {
 
 	duk_join(ctx, len);
 	return 1;
-}
-
-int duk_builtin_array_prototype_join(duk_context *ctx) {
-	DUK_ASSERT_TOP(ctx, 1);  /* nargs is 1 */
-	return array_join_helper(ctx, 0 /*to_locale_string*/);
-}
-
-int duk_builtin_array_prototype_to_locale_string(duk_context *ctx) {
-	DUK_ASSERT_TOP(ctx, 0);  /* nargs is 0 */
-	duk_push_undefined(ctx);  /* array_join_helper() will default to a comma */
-	return array_join_helper(ctx, 1 /*to_locale_string*/);
 }
 
 /*
@@ -608,7 +602,7 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 	int nargs;
 	int item_count;
 	int len;
-	int rel_start;
+	int act_start;
 	int del_count;
 	int i;
 
@@ -620,15 +614,15 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 
 	len = push_this_obj_len_u32(ctx);
 
-	rel_start = duk_to_int_clamped(ctx, 0, -len, len);
-	if (rel_start < 0) {
-		rel_start = len + rel_start;
+	act_start = duk_to_int_clamped(ctx, 0, -len, len);
+	if (act_start < 0) {
+		act_start = len + act_start;
 	}
-	DUK_ASSERT(rel_start >= 0 && rel_start <= len);
+	DUK_ASSERT(act_start >= 0 && act_start <= len);
 
-	del_count = duk_to_int_clamped(ctx, 1, 0, len - rel_start);
-	DUK_ASSERT(del_count >= 0 && del_count <= len - rel_start);
-	DUK_ASSERT(del_count + rel_start <= len);
+	del_count = duk_to_int_clamped(ctx, 1, 0, len - act_start);
+	DUK_ASSERT(del_count >= 0 && del_count <= len - act_start);
+	DUK_ASSERT(del_count + act_start <= len);
 
 	duk_push_array(ctx);
 
@@ -645,7 +639,7 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 	/* Step 9: copy elements-to-be-deleted into the result array */
 
 	for (i = 0; i < del_count; i++) {
-		if (duk_get_prop_index(ctx, -3, rel_start + i)) {
+		if (duk_get_prop_index(ctx, -3, act_start + i)) {
 			duk_put_prop_index(ctx, -2, i);  /* throw flag irrelevant (false in std alg) */
 		} else {
 			duk_pop(ctx);
@@ -665,7 +659,7 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 
 		DUK_ASSERT_TOP(ctx, nargs + 3);
 
-		for (i = rel_start; i < len - del_count; i++) {
+		for (i = act_start; i < len - del_count; i++) {
 			if (duk_get_prop_index(ctx, -3, i + del_count)) {
 				duk_put_prop_index(ctx, -4, i + item_count);  /* FIXME: Throw */
 			} else {
@@ -692,7 +686,7 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 		DUK_ASSERT_TOP(ctx, nargs + 3);
 
 		/* loop iterator init and limit changed from standard algorithm */
-		for (i = len - del_count - 1; i >= rel_start; i--) {
+		for (i = len - del_count - 1; i >= act_start; i--) {
 			if (duk_get_prop_index(ctx, -3, i + del_count)) {
 				duk_put_prop_index(ctx, -4, i + item_count);  /* FIXME: Throw */
 			} else {
@@ -715,7 +709,7 @@ int duk_builtin_array_prototype_splice(duk_context *ctx) {
 
 	for (i = 0; i < item_count; i++) {
 		duk_dup(ctx, i + 2);  /* args start at index 2 */
-		duk_put_prop_index(ctx, -4, rel_start + i);  /* FIXME: Throw */
+		duk_put_prop_index(ctx, -4, act_start + i);  /* FIXME: Throw */
 	}
 
 	/* Step 16: update length; note that the final length may be above 32 bit range */
@@ -931,11 +925,12 @@ int duk_builtin_array_prototype_unshift(duk_context *ctx) {
  *  indexOf(), lastIndexOf()
  */
 
-static int array_indexof_helper(duk_context *ctx, int idx_step) {
+int duk_builtin_array_prototype_indexof_shared(duk_context *ctx) {
 	/* FIXME: types, ensure loop below works when fixed (i must be able to go negative right now) */
 	int nargs;
 	int i, len;
 	int fromIndex;
+	int idx_step = duk_get_magic(ctx);  /* idx_step is +1 for indexOf, -1 for lastIndexOf */
 
 	/* lastIndexOf() needs to be a vararg function because we must distinguish
 	 * between an undefined fromIndex and a "not given" fromIndex; indexOf() is
@@ -966,11 +961,18 @@ static int array_indexof_helper(duk_context *ctx, int idx_step) {
 	 */
 
 	if (nargs >= 2) {
+		/* indexOf: clamp fromIndex to [-len, len]
+		 * (if fromIndex == len, for-loop terminates directly)
+		 *
+		 * lastIndexOf: clamp fromIndex to [-len - 1, len - 1]
+		 * (if clamped to -len-1 -> fromIndex becomes -1, terminates for-loop directly)
+		 */
 		fromIndex = duk_to_int_clamped(ctx,
 		                               1,
 		                               (idx_step > 0 ? -len : -len - 1),
 		                               (idx_step > 0 ? len : len - 1));
 		if (fromIndex < 0) {
+			/* for lastIndexOf, result may be -1 (mark immediate termination) */
 			fromIndex = len + fromIndex;
 		}
 	} else {
@@ -1011,34 +1013,27 @@ static int array_indexof_helper(duk_context *ctx, int idx_step) {
 	return 1;
 }
 
-int duk_builtin_array_prototype_index_of(duk_context *ctx) {
-	return array_indexof_helper(ctx, 1 /*idx_step*/);
-}
-
-int duk_builtin_array_prototype_last_index_of(duk_context *ctx) {
-	return array_indexof_helper(ctx, -1 /*idx_step*/);
-}
-
 /*
  *  every(), some(), forEach(), map(), filter()
  */
 
-#define  ITER_EVERY    0
-#define  ITER_SOME     1
-#define  ITER_FOREACH  2
-#define  ITER_MAP      3
-#define  ITER_FILTER   4
+#define ITER_EVERY    0
+#define ITER_SOME     1
+#define ITER_FOREACH  2
+#define ITER_MAP      3
+#define ITER_FILTER   4
 
 /* FIXME: This helper is a bit awkward because the handling for the different iteration
  * callers is quite different.  This now compiles to a bit less than 500 bytes, so with
  * 5 callers the net result is about 100 bytes / caller.
  */
 
-static int iter_helper(duk_context *ctx, int iter_type) {
+int duk_builtin_array_prototype_iter_shared(duk_context *ctx) {
 	int len;
 	int i;
 	int k;
 	int bval;
+	int iter_type = duk_get_magic(ctx);
 
 	/* each call this helper serves has nargs==2 */
 	DUK_ASSERT_TOP(ctx, 2);
@@ -1112,7 +1107,7 @@ static int iter_helper(duk_context *ctx, int iter_type) {
 			}
 			break;
 		default:
-			DUK_NEVER_HERE();
+			DUK_UNREACHABLE();
 			break;
 		}
 		duk_pop_2(ctx);
@@ -1136,7 +1131,7 @@ static int iter_helper(duk_context *ctx, int iter_type) {
 		DUK_ASSERT(duk_is_array(ctx, -1));  /* topmost element is the result array already */
 		break;
 	default:
-		DUK_NEVER_HERE();
+		DUK_UNREACHABLE();
 		break;
 	}
 
@@ -1146,36 +1141,15 @@ static int iter_helper(duk_context *ctx, int iter_type) {
 	return DUK_RET_TYPE_ERROR;
 }
 
-int duk_builtin_array_prototype_every(duk_context *ctx) {
-	return iter_helper(ctx, ITER_EVERY);
-}
-
-int duk_builtin_array_prototype_some(duk_context *ctx) {
-	return iter_helper(ctx, ITER_SOME);
-}
-
-int duk_builtin_array_prototype_for_each(duk_context *ctx) {
-	return iter_helper(ctx, ITER_FOREACH);
-}
-
-int duk_builtin_array_prototype_map(duk_context *ctx) {
-	return iter_helper(ctx, ITER_MAP);
-}
-
-int duk_builtin_array_prototype_filter(duk_context *ctx) {
-	return iter_helper(ctx, ITER_FILTER);
-}
-
 /*
  *  reduce(), reduceRight()
  */
 
-static int reduce_helper(duk_context *ctx, int idx_step) {
+int duk_builtin_array_prototype_reduce_shared(duk_context *ctx) {
 	int nargs;
 	int have_acc;
 	int i, len;
-
-	/* idx_step is +1 for reduce, -1 for reduceRight */
+	int idx_step = duk_get_magic(ctx);  /* idx_step is +1 for reduce, -1 for reduceRight */
 
 	/* We're a varargs function because we need to detect whether
 	 * initialValue was given or not.
@@ -1247,13 +1221,5 @@ static int reduce_helper(duk_context *ctx, int idx_step) {
 
  type_error:
 	return DUK_RET_TYPE_ERROR;
-}
-
-int duk_builtin_array_prototype_reduce(duk_context *ctx) {
-	return reduce_helper(ctx, 1 /*idx_step*/);
-}
-
-int duk_builtin_array_prototype_reduce_right(duk_context *ctx) {
-	return reduce_helper(ctx, -1 /*idx_step*/);
 }
 

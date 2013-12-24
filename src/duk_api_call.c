@@ -426,7 +426,7 @@ void duk_new(duk_context *ctx, int nargs) {
 	 */
 
 #ifdef DUK_USE_AUGMENT_ERRORS
-	duk_err_augment_error(thr, thr, -1, NULL, 0);
+	duk_err_augment_error(thr, thr, -1, NULL, 0, 1 /*noblame_fileline*/);
 #endif
 
 	/* [... retval] */
@@ -467,5 +467,34 @@ int duk_is_strict_call(duk_context *ctx) {
 
 	act = thr->callstack + thr->callstack_top - 1;
 	return ((act->flags & DUK_ACT_FLAG_STRICT) != 0 ? 1 : 0);
+}
+
+/*
+ *  Duktape/C function magic
+ */
+
+int duk_get_magic(duk_context *ctx) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_activation *act;
+	duk_hobject *func;
+
+	DUK_ASSERT(ctx != NULL);
+	DUK_ASSERT(thr != NULL);
+	DUK_ASSERT(thr->callstack_top >= 0);
+
+	if (thr->callstack_top <= 0) {
+		return 0;
+	}
+
+	act = thr->callstack + thr->callstack_top - 1;
+	func = act->func;
+	DUK_ASSERT(func != NULL);
+
+	if (DUK_HOBJECT_IS_NATIVEFUNCTION(func)) {
+		duk_hnativefunction *nf = (duk_hnativefunction *) func;
+		return (int) nf->magic;
+	}
+
+	return 0;
 }
 
